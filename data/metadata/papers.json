@@ -1,0 +1,108 @@
+[
+  {
+    "paper_id": "2012.12104v1",
+    "title": "A Deep Reinforcement Learning Approach for Ramp Metering Based on Traffic Video Data",
+    "authors": [
+      "Bing Liu",
+      "Yu Tang",
+      "Yuxiong Ji",
+      "Yu Shen",
+      "Yuchuan Du"
+    ],
+    "summary": "Ramp metering that uses traffic signals to regulate vehicle flows from the on-ramps has been widely implemented to improve vehicle mobility of the freeway. Previous studies generally update signal timings in real-time based on predefined traffic measures collected by point detectors, such as traffic volumes and occupancies. Comparing with point detectors, traffic cameras-which have been increasingly deployed on road networks-could cover larger areas and provide more detailed traffic information. In this work, we propose a deep reinforcement learning (DRL) method to explore the potential of traffic video data in improving the efficiency of ramp metering. The proposed method uses traffic video frames as inputs and learns the optimal control strategies directly from the high-dimensional visual inputs. A real-world case study demonstrates that, in comparison with a state-of-the-practice method, the proposed DRL method results in 1) lower travel times in the mainline, 2) shorter vehicle queues at the on-ramp, and 3) higher traffic flows downstream of the merging area. The results suggest that the proposed method is able to extract useful information from the video data for better ramp metering controls.",
+    "published": "2020-12-09T05:08:41+00:00",
+    "updated": "2020-12-09T05:08:41+00:00",
+    "primary_category": "cs.CV",
+    "categories": [
+      "cs.CV",
+      "cs.AI"
+    ],
+    "pdf_url": "https://arxiv.org/pdf/2012.12104v1",
+    "entry_id": "http://arxiv.org/abs/2012.12104v1",
+    "local_pdf_path": "..\\data\\raw\\arxiv\\cs.CV\\2012.12104v1.pdf"
+  },
+  {
+    "paper_id": "2012.13026v1",
+    "title": "Rethink AI-based Power Grid Control: Diving Into Algorithm Design",
+    "authors": [
+      "Xiren Zhou",
+      "Siqi Wang",
+      "Ruisheng Diao",
+      "Desong Bian",
+      "Jiahui Duan",
+      "Di Shi"
+    ],
+    "summary": "Recently, deep reinforcement learning (DRL)-based approach has shown promisein solving complex decision and control problems in power engineering domain.In this paper, we present an in-depth analysis of DRL-based voltage control fromaspects of algorithm selection, state space representation, and reward engineering.To resolve observed issues, we propose a novel imitation learning-based approachto directly map power grid operating points to effective actions without any interimreinforcement learning process. The performance results demonstrate that theproposed approach has strong generalization ability with much less training time.The agent trained by imitation learning is effective and robust to solve voltagecontrol problem and outperforms the former RL agents.",
+    "published": "2020-12-23T23:38:41+00:00",
+    "updated": "2020-12-23T23:38:41+00:00",
+    "primary_category": "cs.AI",
+    "categories": [
+      "cs.AI"
+    ],
+    "pdf_url": "https://arxiv.org/pdf/2012.13026v1",
+    "entry_id": "http://arxiv.org/abs/2012.13026v1",
+    "local_pdf_path": "..\\data\\raw\\arxiv\\cs.AI\\2012.13026v1.pdf"
+  },
+  {
+    "paper_id": "2012.13293v1",
+    "title": "Fuzzy Commitments Offer Insufficient Protection to Biometric Templates Produced by Deep Learning",
+    "authors": [
+      "Danny Keller",
+      "Margarita Osadchy",
+      "Orr Dunkelman"
+    ],
+    "summary": "In this work, we study the protection that fuzzy commitments offer when they are applied to facial images, processed by the state of the art deep learning facial recognition systems. We show that while these systems are capable of producing great accuracy, they produce templates of too little entropy. As a result, we present a reconstruction attack that takes a protected template, and reconstructs a facial image. The reconstructed facial images greatly resemble the original ones. In the simplest attack scenario, more than 78% of these reconstructed templates succeed in unlocking an account (when the system is configured to 0.1% FAR). Even in the \"hardest\" settings (in which we take a reconstructed image from one system and use it in a different system, with different feature extraction process) the reconstructed image offers 50 to 120 times higher success rates than the system's FAR.",
+    "published": "2020-12-24T15:28:33+00:00",
+    "updated": "2020-12-24T15:28:33+00:00",
+    "primary_category": "cs.CR",
+    "categories": [
+      "cs.CR",
+      "cs.AI"
+    ],
+    "pdf_url": "https://arxiv.org/pdf/2012.13293v1",
+    "entry_id": "http://arxiv.org/abs/2012.13293v1",
+    "local_pdf_path": "..\\data\\raw\\arxiv\\cs.CR\\2012.13293v1.pdf"
+  },
+  {
+    "paper_id": "2012.13315v1",
+    "title": "Generalization in portfolio-based algorithm selection",
+    "authors": [
+      "Maria-Florina Balcan",
+      "Tuomas Sandholm",
+      "Ellen Vitercik"
+    ],
+    "summary": "Portfolio-based algorithm selection has seen tremendous practical success over the past two decades. This algorithm configuration procedure works by first selecting a portfolio of diverse algorithm parameter settings, and then, on a given problem instance, using an algorithm selector to choose a parameter setting from the portfolio with strong predicted performance. Oftentimes, both the portfolio and the algorithm selector are chosen using a training set of typical problem instances from the application domain at hand. In this paper, we provide the first provable guarantees for portfolio-based algorithm selection. We analyze how large the training set should be to ensure that the resulting algorithm selector's average performance over the training set is close to its future (expected) performance. This involves analyzing three key reasons why these two quantities may diverge: 1) the learning-theoretic complexity of the algorithm selector, 2) the size of the portfolio, and 3) the learning-theoretic complexity of the algorithm's performance as a function of its parameters. We introduce an end-to-end learning-theoretic analysis of the portfolio construction and algorithm selection together. We prove that if the portfolio is large, overfitting is inevitable, even with an extremely simple algorithm selector. With experiments, we illustrate a tradeoff exposed by our theoretical analysis: as we increase the portfolio size, we can hope to include a well-suited parameter setting for every possible problem instance, but it becomes impossible to avoid overfitting.",
+    "published": "2020-12-24T16:33:17+00:00",
+    "updated": "2020-12-24T16:33:17+00:00",
+    "primary_category": "cs.AI",
+    "categories": [
+      "cs.AI"
+    ],
+    "pdf_url": "https://arxiv.org/pdf/2012.13315v1",
+    "entry_id": "http://arxiv.org/abs/2012.13315v1",
+    "local_pdf_path": "..\\data\\raw\\arxiv\\cs.AI\\2012.13315v1.pdf"
+  },
+  {
+    "paper_id": "2012.13391v2",
+    "title": "I like fish, especially dolphins: Addressing Contradictions in Dialogue Modeling",
+    "authors": [
+      "Yixin Nie",
+      "Mary Williamson",
+      "Mohit Bansal",
+      "Douwe Kiela",
+      "Jason Weston"
+    ],
+    "summary": "To quantify how well natural language understanding models can capture consistency in a general conversation, we introduce the DialoguE COntradiction DEtection task (DECODE) and a new conversational dataset containing both human-human and human-bot contradictory dialogues. We then compare a structured utterance-based approach of using pre-trained Transformer models for contradiction detection with the typical unstructured approach. Results reveal that: (i) our newly collected dataset is notably more effective at providing supervision for the dialogue contradiction detection task than existing NLI data including those aimed to cover the dialogue domain; (ii) the structured utterance-based approach is more robust and transferable on both analysis and out-of-distribution dialogues than its unstructured counterpart. We also show that our best contradiction detection model correlates well with human judgments and further provide evidence for its usage in both automatically evaluating and improving the consistency of state-of-the-art generative chatbots.",
+    "published": "2020-12-24T18:47:49+00:00",
+    "updated": "2020-12-28T18:32:21+00:00",
+    "primary_category": "cs.CL",
+    "categories": [
+      "cs.CL",
+      "cs.AI",
+      "cs.LG"
+    ],
+    "pdf_url": "https://arxiv.org/pdf/2012.13391v2",
+    "entry_id": "http://arxiv.org/abs/2012.13391v2",
+    "local_pdf_path": "..\\data\\raw\\arxiv\\cs.CL\\2012.13391v2.pdf"
+  }
+]
