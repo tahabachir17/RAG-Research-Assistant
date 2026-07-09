@@ -1,182 +1,126 @@
-# RAG Research Assistant
+# RAG AI Research Papers Assistant
 
-Ask questions about AI research papers in plain English and get grounded, cited answers — not a keyword search, not a hallucinated summary.
+This project is a research-paper ingestion system for a future RAG assistant. It discovers papers from a user research query, downloads PDFs, parses and cleans their content, detects paper sections, extracts metadata and citations, and saves structured JSON artifacts for later chunking, embedding, indexing, and retrieval.
 
-RAG Research Assistant ingests papers from ArXiv, indexes them section-by-section, and answers questions using hybrid retrieval (semantic + keyword search), cross-encoder reranking, and an LLM that's required to cite its sources. Every answer traces back to the exact paper and section it came from.
+## Current Default Architecture
 
----
-
-## Why this exists
-
-Keeping up with AI research means wading through hundreds of papers. Most RAG demos chunk text into arbitrary fixed-size windows, which means a question like *"what dataset did they use?"* can retrieve a random paragraph instead of the actual Experiments section. This project takes a more deliberate approach: retrieval quality is treated as the core problem, not an afterthought.
-
-## Features
-
-- **ArXiv ingestion pipeline** — search, download, and parse papers by topic or category
-- **Section-aware chunking** — documents are split by abstract, introduction, methodology, results, and conclusion, not by arbitrary token windows
-- **Hybrid retrieval** — dense (semantic) search fused with BM25 (keyword) search via Reciprocal Rank Fusion
-- **Cross-encoder reranking** — a second, more precise pass re-scores the top candidates before they reach the LLM
-- **Cited, grounded answers** — every answer references the specific papers and sections it draws from, and the model is instructed to say so when it doesn't know
-- **RAGAS evaluation** — retrieval and generation quality are measured against a golden Q&A set, not eyeballed
-- **Chat + explore + evaluate UI** — a Streamlit app for asking questions, browsing the corpus, and viewing quality metrics
-- **One-command deployment** — the full stack runs via Docker Compose
-
-## How it works
-
-```
-User query
-    │
-    ▼
-Query Processor        clean + expand the query (HyDE)
-    │
-    ▼
-Hybrid Retriever        dense (Qdrant) + sparse (BM25) → RRF fusion
-    │
-    ▼
-Cross-Encoder Reranker   re-score top candidates for precision
-    │
-    ▼
-Context Assembler        build a prompt from the retrieved chunks
-    │
-    ▼
-LLM (Claude API)         generate a grounded, cited answer
-    │
-    ▼
-Streamlit UI / API       display the answer with source cards
+```text
+User research query
+  -> Groq-backed alphaXiv query planner when GROQ_API_KEY is set
+  -> alphaXiv MCP paper discovery
+  -> if alphaXiv MCP fails: direct arXiv scraper fallback
+  -> normalized Paper metadata / arXiv IDs / PDF URLs
+  -> PDF download
+  -> PDF parsing with PyMuPDF
+  -> section detection
+  -> metadata extraction
+  -> citation extraction
+  -> data cleaning
+  -> processed JSON saved for future chunking / embedding / RAG
 ```
 
-## Tech stack
+The default discovery provider is `auto`, implemented by `AlphaXivThenArxivDiscovery`. It tries `AlphaXivMCPPaperDiscovery` first and falls back to `ArxivPaperDiscovery` if alphaXiv MCP is unavailable, returns no parseable results, times out, or raises an integration error.
 
-| Layer | Technology |
+## Main Modules
+
+| File | Purpose |
 |---|---|
-| Language | Python |
-| API | FastAPI |
-| Vector store | Qdrant |
-| Embeddings | sentence-transformers |
-| LLM | Claude API |
-| UI | Streamlit |
-| Containerization | Docker / Docker Compose |
-| CI/CD | GitHub Actions |
+| `ingestion/paper_discovery.py` | Discovery providers, Groq alphaXiv planning, alphaXiv MCP integration, arXiv fallback, scoring, deduplication |
+| `ingestion/pipeline.py` | End-to-end ingestion orchestration and CLI |
+| `ingestion/arxiv_scraper.py` | Direct arXiv API client and normalized `Paper` schema |
+| `ingestion/pdf_downloader.py` | PDF download and local raw PDF storage |
+| `ingestion/pdf_parser.py` | PyMuPDF text extraction into page-level raw documents |
+| `ingestion/section_detector.py` | Heuristic section detection for abstract, introduction, method, experiments, conclusion, references |
+| `ingestion/metadata_extractor.py` | Paper-level metadata normalization |
+| `ingestion/citation_extractor.py` | Reference list and citation extraction |
+| `ingestion/data_cleaner.py` | PDF text cleanup and normalization |
+| `tests/unit/test_ingestion.py` | Unit tests for ingestion utilities and discovery fallback behavior |
 
-## Quick start
+## Discovery Providers
 
-```bash
-# 1. Clone and set up the environment
-git clone https://github.com/<your-username>/rag-research-assistant
-cd rag-research-assistant
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # add your Anthropic API key
+- `auto`: default production path. alphaXiv MCP first, direct arXiv fallback.
+- `alphaxiv-mcp`: alphaXiv MCP only.
+- `arxiv`: direct arXiv API only.
+- `research-apis`: arXiv plus optional Semantic Scholar and OpenAlex enrichment.
+- `feyman`: optional legacy/local Feyman integration.
 
-# 2. Start infrastructure
-docker compose up qdrant redis -d
+## alphaXiv MCP Setup
 
-# 3. Ingest some papers
-python scripts/ingest_arxiv.py --query "retrieval augmented generation" --max 100
-
-# 4. Start the API
-uvicorn api.main:app --reload
-
-# 5. Start the UI (in another terminal)
-streamlit run frontend/app.py
-```
-
-Or run everything at once:
+The alphaXiv provider expects a local MCP bridge command. By default it uses:
 
 ```bash
-docker compose up --build
+npx -y mcp-remote https://api.alphaxiv.org/mcp/v1
 ```
 
-| Service | URL |
-|---|---|
-| API docs | http://localhost:8000/docs |
-| Streamlit UI | http://localhost:8501 |
-| Qdrant dashboard | http://localhost:6333/dashboard |
-
-## Usage
-
-**Ask a question via the UI:** open the Chat page and ask anything about the ingested corpus. Answers include inline citations `[1]`, `[2]` linking to the source papers.
-
-**Ask a question via the API:**
+You can override it with:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What attention mechanism does the Transformer use?"}'
+set ALPHAXIV_MCP_COMMAND=npx -y mcp-remote https://api.alphaxiv.org/mcp/v1
 ```
 
-**Ingest more papers:**
+If `GROQ_API_KEY` is set, the alphaXiv provider uses Groq to produce better `discover_papers` arguments: concise keywords, a richer semantic question, and difficulty tuning. If Groq is not configured or fails, local query-planning heuristics are used.
+
+## Run Ingestion
+
+Default architecture:
 
 ```bash
-curl -X POST http://localhost:8000/api/v1/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"query": "large language model alignment", "max_results": 50}'
+python -m ingestion.pipeline --query "retrieval augmented generation" --max-results 5
 ```
 
-## Project structure
-
-```
-rag-research-assistant/
-├── ingestion/      # ArXiv scraping, PDF parsing, section detection
-├── processing/     # Chunking, embedding, BM25 + Qdrant indexing
-├── retrieval/      # Hybrid search, RRF fusion, reranking
-├── generation/      # Prompt assembly, LLM client, citation validation
-├── evaluation/      # RAGAS metrics, golden Q&A set, batch evaluation
-├── api/            # FastAPI backend
-├── frontend/        # Streamlit UI (chat, explore, evaluate)
-├── config/          # Settings + prompt templates
-├── tests/           # Unit, integration, and end-to-end tests
-└── docker/           # Dockerfiles + docker-compose.yml
-```
-
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full layer-by-layer breakdown, and [`CAHIER_DES_CHARGES.md`](CAHIER_DES_CHARGES.md) for the project specification.
-
-## Evaluation
-
-Retrieval and generation quality are tracked with [RAGAS](https://github.com/explodinggradients/ragas) against a curated set of question/answer/context triples.
-
-| Metric | Target |
-|---|---|
-| Faithfulness | > 0.85 |
-| Answer Relevancy | > 0.80 |
-| Context Precision | > 0.75 |
-| Context Recall | > 0.70 |
-| Answer Correctness | > 0.75 |
-
-Run the evaluation suite:
+Explicit providers:
 
 ```bash
-python -m evaluation.batch_evaluator
+python -m ingestion.pipeline --query "retrieval augmented generation" --max-results 5 --discovery-provider auto
+python -m ingestion.pipeline --query "retrieval augmented generation" --max-results 5 --discovery-provider alphaxiv-mcp
+python -m ingestion.pipeline --query "retrieval augmented generation" --max-results 5 --discovery-provider arxiv
 ```
 
-Results are saved to `evaluation/data/eval_results/` and viewable on the Evaluate page of the UI.
+Outputs are written to:
 
-## Roadmap
+- `data/raw/arxiv/{category}/{paper_id}.pdf`
+- `data/metadata/papers.json`
+- `data/processed/raw_text/{category}/{paper_id}.json`
 
-Deprioritized for v1, planned for later:
+## Processed JSON Shape
 
-- Diversity-aware retrieval (MMR sampling)
-- Citation graph visualization
-- Support for non-ArXiv sources (manual PDF upload, other repositories)
-- Multi-user auth and saved conversations
+Each processed paper includes:
 
-## Contributing
+- `paper_id`
+- normalized `metadata`
+- `raw_document` with page text
+- cleaned `sections`
+- `section_spans`
+- extracted `citations`
 
-Issues and pull requests are welcome. Before opening a PR, please make sure:
+These artifacts are intentionally ready for the next layer: section-aware chunking, embeddings, vector indexing, and RAG retrieval.
+
+## Tests
 
 ```bash
-ruff check .
-black --check .
-mypy .
-pytest tests/unit/
+python -m pytest tests\unit\test_ingestion.py
 ```
 
-all pass — these are enforced in CI on every pull request.
+Current local verification: `13 passed`. Pytest may emit a Windows cache warning if the sandbox cannot write `.pytest_cache`; that warning does not indicate test failure.
 
-## License
+## Current Scope
 
-[MIT](LICENSE)
+Implemented now:
 
----
+- discovery orchestration
+- alphaXiv MCP integration
+- Groq-assisted alphaXiv query planning
+- arXiv fallback discovery
+- PDF download and parsing
+- section, metadata, citation extraction
+- data cleaning
+- structured output saving
 
-Built by [Taha](https://github.com/<your-username>) as an open-source exploration of production-grade RAG systems.
+Planned later:
+
+- section-aware chunking
+- embeddings
+- BM25 and vector indexing
+- retrieval and reranking
+- grounded generation
+- API and UI layers
