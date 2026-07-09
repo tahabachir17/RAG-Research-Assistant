@@ -1,88 +1,67 @@
+﻿from __future__ import annotations
+
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import List, Dict, Any
-import fitz
-import json
 
-@dataclass
+try:
+    import fitz
+except ImportError:
+    fitz = None  # type: ignore[assignment]
+
+
+@dataclass(slots=True)
 class RawPage:
     page_number: int
     text: str
     char_count: int
 
-@dataclass
+
+@dataclass(slots=True)
 class RawDocument:
     paper_id: str
     pdf_path: str
     pages_count: int
-    pages: List[RawPage]
+    pages: list[RawPage]
+
+    @property
+    def full_text(self) -> str:
+        return "\n\n".join(page.text for page in self.pages if page.text)
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+
+class PDFParser:
+    """Extract page-level text from PDFs with PyMuPDF."""
+
+    def extract(self, path: str | Path, paper_id: str | None = None) -> RawDocument:
+        return extract_pdf_text(path, paper_id=paper_id)
 
 
 def extract_pdf_text(pdf_path: str | Path, paper_id: str | None = None) -> RawDocument:
-    pdf_path = Path(pdf_path)
+    if fitz is None:
+        raise ImportError(
+            "PyMuPDF is required to extract PDF text. Install the PyMuPDF package."
+        )
 
+    pdf_path = Path(pdf_path)
     if not pdf_path.exists():
         raise FileNotFoundError(f"PDF file not found: {pdf_path}")
-
     if paper_id is None:
         paper_id = pdf_path.stem
 
-    pages = []
+    pages: list[RawPage] = []
+    with fitz.open(pdf_path) as document:
+        for page_number, page in enumerate(document, start=1):
+            text = page.get_text("text") or ""
+            pages.append(
+                RawPage(page_number=page_number, text=text, char_count=len(text))
+            )
+        page_count = document.page_count
 
-    with fitz.open(pdf_path) as doc:
-        for page_number, page in enumerate(doc, start=1):
-            text = page.get_text("text")
-            char_count = len(text)
-
-            pages.append(RawPage(
-                page_number=page_number,
-                text=text,
-                char_count=char_count
-            ))
-        
-        raw_doc = RawDocument(
-            paper_id=paper_id,
-            pdf_path=str(pdf_path),
-            pages_count=doc.page_count,
-            pages=pages
-        )
-
-    return raw_doc
-
-
-
-RAW_DIR = Path("../data/raw/arxiv")
-OUTPUT_DIR = Path("../data/processed/raw_text")
-
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-
-
-for category_folder in RAW_DIR.iterdir():
-
-    # skip non-folders (safety check)
-    if not category_folder.is_dir():
-        continue
-
-    print(f"\n📁 Processing category: {category_folder.name}")
-
-    # loop through PDFs in category
-    for pdf_file in category_folder.glob("*.pdf"):
-
-        try:
-            print(f"   📄 Extracting: {pdf_file.name}")
-
-            # 1. extract text page-by-page
-            raw_doc = extract_pdf_text(pdf_file)
-
-            # 2. build output path (keep category structure)
-            category_output_dir = OUTPUT_DIR / category_folder.name
-            category_output_dir.mkdir(parents=True, exist_ok=True)
-
-            output_path = category_output_dir / f"{raw_doc.paper_id}.json"
-
-            # 3. save JSON
-            with open(output_path, "w", encoding="utf-8") as f:
-                json.dump(asdict(raw_doc), f, ensure_ascii=False, indent=2)
-
-        except Exception as e:
-            print(f"   ❌ Failed {pdf_file.name}: {e}")
+    return RawDocument(
+        paper_id=paper_id,
+        pdf_path=str(pdf_path),
+        pages_count=page_count,
+        pages=pages,
+    )
