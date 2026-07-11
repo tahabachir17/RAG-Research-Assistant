@@ -6,7 +6,7 @@ from typing import Any, Iterable
 
 try:
     import arxiv
-except ImportError:  # Dependency is needed only for live arXiv discovery.
+except ImportError:  # Dependency is required only when running live arXiv discovery.
     arxiv = None  # type: ignore[assignment]
 
 
@@ -49,7 +49,7 @@ class Paper:
 
 
 class ArxivScraper:
-    """Thin wrapper around the arxiv package."""
+    """Thin ArXiv API client used by the ingestion pipeline."""
 
     def __init__(
         self,
@@ -86,7 +86,9 @@ class ArxivScraper:
             sort_order=sort_order or arxiv.SortOrder.Descending,
         )
         assert self.client is not None
-        return [paper_from_arxiv_result(result) for result in self.client.results(search)]
+        return [
+            paper_from_arxiv_result(result) for result in self.client.results(search)
+        ]
 
 
 def paper_from_arxiv_result(result: Any) -> Paper:
@@ -110,7 +112,10 @@ def paper_from_arxiv_result(result: Any) -> Paper:
 
 
 def papers_to_dicts(papers: Iterable[Paper]) -> list[dict[str, Any]]:
-    return [paper.to_dict() if isinstance(paper, Paper) else dict(paper) for paper in papers]
+    return [
+        paper.to_dict() if isinstance(paper, Paper) else dict(paper)
+        for paper in papers
+    ]
 
 
 def _short_id(result: Any) -> str:
