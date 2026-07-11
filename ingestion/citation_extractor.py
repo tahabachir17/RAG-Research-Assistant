@@ -94,7 +94,7 @@ def _parse_reference(index: int, raw_text: str) -> Citation:
 
 def _guess_title(raw_text: str) -> str | None:
     without_marker = re.sub(r"^\s*(?:\[\d+\]|\d+\.|\d+\))\s*", "", raw_text)
-    quoted = re.search(r"[\"“](.+?)[\"”]", without_marker)
+    quoted = re.search(r"[\"â€œ](.+?)[\"â€]", without_marker)
     if quoted:
         return quoted.group(1).strip()
     parts = [
