@@ -1,4 +1,4 @@
-﻿"""Section-aware chunking for parsed research papers.
+"""Section-aware chunking for parsed research papers.
 
 Offsets on :class:`Chunk` are relative to the original section text.  This makes
 the stored text auditable with ``section_text[start_char:end_char]``.
@@ -68,6 +68,7 @@ class SectionAwareChunker:
         self,
         max_tokens: int = 512,
         overlap_tokens: int = 80,
+        min_tokens: int = 40,
         *,
         encoding_name: str = "cl100k_base",
         tokenizer: Tokenizer | None = None,
@@ -76,8 +77,11 @@ class SectionAwareChunker:
             raise ValueError("max_tokens must be positive")
         if not 0 <= overlap_tokens < max_tokens:
             raise ValueError("overlap_tokens must be between 0 and max_tokens - 1")
+        if min_tokens < 1:
+            raise ValueError("min_tokens must be positive")
         self.max_tokens = max_tokens
         self.overlap_tokens = overlap_tokens
+        self.min_tokens = min_tokens
         if tokenizer is not None:
             self.tokenizer = tokenizer
         else:
@@ -95,20 +99,25 @@ class SectionAwareChunker:
             sections = {"unknown": fallback} if fallback.strip() else {}
 
         chunks: list[Chunk] = []
+        seen_chunk_ids: set[str] = set()
         for section, value in sections.items():
             text = str(value or "")
+            section_name = str(section or "unknown").strip() or "unknown"
             for start, end in self._windows(text):
                 chunk_id = str(
                     uuid.uuid5(
                         uuid.NAMESPACE_URL,
-                        f"rag-paper:{paper_id}:{section}:{start}:{end}:{text[start:end]}",
+                        f"rag-paper:{paper_id}:{section_name}:{start}:{end}:{text[start:end]}",
                     )
                 )
+                if chunk_id in seen_chunk_ids:
+                    continue
+                seen_chunk_ids.add(chunk_id)
                 chunks.append(
                     Chunk(
                         chunk_id=chunk_id,
                         paper_id=paper_id,
-                        section=str(section),
+                        section=section_name,
                         text=text[start:end],
                         start_char=start,
                         end_char=end,
@@ -128,11 +137,17 @@ class SectionAwareChunker:
             limit_token = min(start_token + self.max_tokens, len(spans))
             end_char = spans[limit_token - 1][1]
             if limit_token < len(spans):
-                minimum = spans[start_token + max(1, int(self.max_tokens * 0.6)) - 1][1]
-                candidates = [point for point in boundaries if minimum <= point <= end_char]
+                minimum_tokens = min(self.min_tokens, limit_token - start_token)
+                minimum = spans[start_token + minimum_tokens - 1][1]
+                candidates = [
+                    point for point in boundaries if minimum <= point <= end_char
+                ]
                 if candidates:
                     end_char = candidates[-1]
-                    while limit_token > start_token and spans[limit_token - 1][0] >= end_char:
+                    while (
+                        limit_token > start_token
+                        and spans[limit_token - 1][0] >= end_char
+                    ):
                         limit_token -= 1
 
             start_char, end_char = _trim_span(text, spans[start_token][0], end_char)
@@ -146,11 +161,14 @@ class SectionAwareChunker:
 
 
 def chunk_document(
-    document: object, max_tokens: int = 512, overlap_tokens: int = 80
+    document: object,
+    max_tokens: int = 512,
+    overlap_tokens: int = 80,
+    min_tokens: int = 40,
 ) -> list[Chunk]:
     """Convenience wrapper for :class:`SectionAwareChunker`."""
 
-    return SectionAwareChunker(max_tokens, overlap_tokens).chunk(document)
+    return SectionAwareChunker(max_tokens, overlap_tokens, min_tokens).chunk(document)
 
 
 def _field(value: object, name: str, default: Any = None) -> Any:
@@ -184,7 +202,10 @@ def _fallback_text(document: object) -> str:
 def _natural_boundaries(text: str) -> list[int]:
     # Paragraphs have priority because they occur later at an equal search range.
     return sorted(
-        {match.end() for match in re.finditer(r"(?:[.!?](?:[\"')\]]*)\s+|\n\s*\n)", text)}
+        {
+            match.end()
+            for match in re.finditer(r"(?:[.!?](?:[\"')\]]*)\s+|\n\s*\n)", text)
+        }
     )
 
 
@@ -194,4 +215,3 @@ def _trim_span(text: str, start: int, end: int) -> tuple[int, int]:
     while end > start and text[end - 1].isspace():
         end -= 1
     return start, end
-
