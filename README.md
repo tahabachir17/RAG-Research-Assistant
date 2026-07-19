@@ -39,144 +39,72 @@ Cross-Encoder Reranker   re-score top candidates for precision
 Context Assembler        build a prompt from the retrieved chunks
     │
     ▼
-LLM (Claude API)         generate a grounded, cited answer
+LLM (Groq API)         generate a grounded, cited answer
     │
     ▼
 Streamlit UI / API       display the answer with source cards
 ```
 
-## Tech stack
 
-| Layer | Technology |
+## Follow-up
+
+The work completed so far was developed in three parts: a deterministic ingestion foundation, an improved discovery stage, and section-aware chunking for retrieval.
+
+### Part 1: Ingestion - 06/07/2026
+
+This part implements a reproducible pipeline using the ArXiv API, PDF parsing, regular expressions, and text-processing heuristics, without requiring an LLM or MCP server.
+
+| File | Summary |
 |---|---|
-| Language | Python |
-| API | FastAPI |
-| Vector store | Qdrant |
-| Embeddings | sentence-transformers |
-| LLM | Claude API |
-| UI | Streamlit |
-| Containerization | Docker / Docker Compose |
-| CI/CD | GitHub Actions |
+| `ingestion/arxiv_scraper.py` | Searches ArXiv and normalizes results into `Paper` objects with identifiers, metadata, abstracts, categories, and URLs. |
+| `ingestion/pdf_downloader.py` | Downloads PDFs into category-based directories, skips existing files, and reports download failures. |
+| `ingestion/pdf_parser.py` | Extracts page-by-page text and metadata from PDFs with PyMuPDF and produces a `RawDocument`. |
+| `ingestion/section_detector.py` | Detects research-paper headings and groups text into labelled sections such as abstract, introduction, method, experiments, conclusion, and references. |
+| `ingestion/data_cleaner.py` | Repairs common PDF text artifacts, joins broken words and lines, removes isolated page numbers, and normalizes whitespace. |
+| `ingestion/citation_extractor.py` | Parses references into structured citations and extracts ArXiv IDs and DOIs when available. |
+| `ingestion/metadata_extractor.py` | Produces consistent paper metadata for persistence and later indexing stages. |
+| `ingestion/pipeline.py` | Orchestrates download, parsing, section detection, cleaning, citation extraction, and JSON persistence while collecting per-paper errors. |
+| `ingestion/__init__.py` | Exposes the public ingestion classes and helper functions. |
 
-## Quick start
+**Part 1 summary:** papers can be downloaded, transformed into clean section-labelled text, enriched with metadata and citations, and saved as structured JSON without generative AI dependencies.
 
-```bash
-# 1. Clone and set up the environment
-git clone https://github.com/<your-username>/rag-research-assistant
-cd rag-research-assistant
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env   # add your Anthropic API key
+### Part 2: Improvement — discovery before ingestion using LLM and MCP - 09/07/2026
 
-# 2. Start infrastructure
-docker compose up qdrant redis -d
+This part adds a dedicated discovery stage to improve result relevance, support multiple sources, remove duplicates, and retain a reliable ArXiv fallback.
 
-# 3. Ingest some papers
-python scripts/ingest_arxiv.py --query "retrieval augmented generation" --max 100
-
-# 4. Start the API
-uvicorn api.main:app --reload
-
-# 5. Start the UI (in another terminal)
-streamlit run frontend/app.py
-```
-
-Or run everything at once:
-
-```bash
-docker compose up --build
-```
-
-| Service | URL |
+| File | Summary |
 |---|---|
-| API docs | http://localhost:8000/docs |
-| Streamlit UI | http://localhost:8501 |
-| Qdrant dashboard | http://localhost:6333/dashboard |
+| `ingestion/paper_discovery.py` | Defines the discovery interface and implements ArXiv, alphaXiv MCP, Feyman, research-API, and automatic alphaXiv-to-ArXiv fallback providers. It normalizes responses, deduplicates papers, and ranks candidates. |
+| `ingestion/pipeline.py` | Runs the selected discovery provider before downloading and records provider, discovery, and fallback metadata in saved records. |
+| `ingestion/arxiv_scraper.py` | Provides direct ArXiv search and remains the dependable fallback when enhanced discovery is unavailable. |
+| `tests/unit/test_ingestion.py` | Tests normalization, scoring, deduplication, ingestion helpers, and automatic provider fallback without live external services. |
 
-## Usage
+**Part 2 summary:** ingestion is no longer tied to one search mechanism. Richer discovery can be attempted while a deterministic ArXiv-only path remains available for local testing and fallback.
 
-**Ask a question via the UI:** open the Chat page and ask anything about the ingested corpus. Answers include inline citations `[1]`, `[2]` linking to the source papers.
+### Part 3: Chunking - 14/07/2026
 
-**Ask a question via the API:**
+This part transforms processed papers into retrieval-ready chunks while retaining section structure and source provenance.
 
-```bash
-curl -X POST http://localhost:8000/api/v1/chat \
-  -H "Content-Type: application/json" \
-  -d '{"question": "What attention mechanism does the Transformer use?"}'
-```
-
-**Ingest more papers:**
-
-```bash
-curl -X POST http://localhost:8000/api/v1/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"query": "large language model alignment", "max_results": 50}'
-```
-
-## Project structure
-
-```
-rag-research-assistant/
-├── ingestion/      # ArXiv scraping, PDF parsing, section detection
-├── processing/     # Chunking, embedding, BM25 + Qdrant indexing
-├── retrieval/      # Hybrid search, RRF fusion, reranking
-├── generation/      # Prompt assembly, LLM client, citation validation
-├── evaluation/      # RAGAS metrics, golden Q&A set, batch evaluation
-├── api/            # FastAPI backend
-├── frontend/        # Streamlit UI (chat, explore, evaluate)
-├── config/          # Settings + prompt templates
-├── tests/           # Unit, integration, and end-to-end tests
-└── docker/           # Dockerfiles + docker-compose.yml
-```
-
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full layer-by-layer breakdown, and [`CAHIER_DES_CHARGES.md`](CAHIER_DES_CHARGES.md) for the project specification.
-
-## Evaluation
-
-Retrieval and generation quality are tracked with [RAGAS](https://github.com/explodinggradients/ragas) against a curated set of question/answer/context triples.
-
-| Metric | Target |
+| File | Summary |
 |---|---|
-| Faithfulness | > 0.85 |
-| Answer Relevancy | > 0.80 |
-| Context Precision | > 0.75 |
-| Context Recall | > 0.70 |
-| Answer Correctness | > 0.75 |
+| `processing/chunker.py` | Defines the `Chunk` schema and section-aware chunker. It uses bounded overlapping windows, prefers natural text boundaries, preserves exact offsets, creates deterministic UUIDs, and supports raw-text fallback. |
+| `processing/__init__.py` | Exposes `Chunk`, `SectionAwareChunker`, and `chunk_document` as the processing package API. |
+| `tests/unit/test_chunker.py` | Verifies labels, offsets, window sizes, overlap, stable IDs, configuration validation, and unsectioned-document fallback. |
 
-Run the evaluation suite:
+**Part 3 summary:** processed papers can now become stable, traceable chunks for embedding, indexing, retrieval filtering, and section-specific citation. Defaults are 512 tokens with an 80-token overlap and natural-boundary cuts where possible.
 
-```bash
-python -m evaluation.batch_evaluator
-```
+### Part 4: Dense and sparse indexing - 16/07/2026
 
-Results are saved to `evaluation/data/eval_results/` and viewable on the Evaluate page of the UI.
+This part completes the first retrieval-ready processing pipeline by adding dense embeddings, BM25 sparse indexing, persistence, and local end-to-end validation without remote discovery.
 
-## Roadmap
+| File | Summary |
+|---|---|
+| `processing/chunker.py` | Adds the configurable 40-token minimum, duplicate prevention, malformed-input handling, deterministic chunk IDs, section labels, metadata, and exact character offsets. |
+| `processing/embedder.py` | Loads `sentence-transformers/all-MiniLM-L6-v2` once and converts text or `Chunk` objects into JSON-ready 384-dimensional dense embeddings. Empty inputs and blank text are handled safely. |
+| `processing/bm25_indexer.py` | Builds a `BM25Okapi` sparse index from chunks, performs ranked keyword search, and saves or restores the index and chunk records with pickle. |
+| `local_pipeline_test.py` | Runs the existing local PDFs through ingestion, chunking, BM25 indexing, and optional embedding without external paper discovery or new downloads. |
+| `tests/unit/test_chunker.py` | Tests normal, long, empty, missing, and malformed section inputs together with offsets, overlap, labels, and unique IDs. |
+| `tests/unit/test_embedder.py` | Tests model reuse, empty inputs, blank-text filtering, metadata preservation, and numeric embedding output using a mocked transformer model. |
+| `tests/unit/test_bm25_indexer.py` | Tests index construction, ranking, `top_k`, empty inputs, persistence, restoration, and post-load search. |
 
-Deprioritized for v1, planned for later:
-
-- Diversity-aware retrieval (MMR sampling)
-- Citation graph visualization
-- Support for non-ArXiv sources (manual PDF upload, other repositories)
-- Multi-user auth and saved conversations
-
-## Contributing
-
-Issues and pull requests are welcome. Before opening a PR, please make sure:
-
-```bash
-ruff check .
-black --check .
-mypy .
-pytest tests/unit/
-```
-
-all pass — these are enforced in CI on every pull request.
-
-## License
-
-[MIT](LICENSE)
-
----
-
-Built by [Taha](https://github.com/<your-username>) as an open-source exploration of production-grade RAG systems.
+**Part 4 summary:** locally ingested papers can now be transformed into stable section-aware chunks, dense MiniLM embeddings, and a persistent BM25 sparse index for later retrieval.
