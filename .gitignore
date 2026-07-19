@@ -4,7 +4,6 @@ venv/
 env/
 .env
 .env.example
-notebooks/02_alphaxiv_mcp_discovery_test.ipynb
 
 # Python caching
 __pycache__/
