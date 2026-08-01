@@ -94,7 +94,7 @@ class AlphaXivMCPPaperDiscovery:
         self.command = self.command or os.getenv("ALPHAXIV_MCP_COMMAND", "npx -y mcp-remote https://api.alphaxiv.org/mcp/v1")
         self.difficulty = max(1, min(int(self.difficulty), 10))
         self.groq_api_key = self.groq_api_key or os.getenv("GROQ_API_KEY")
-        self.groq_model = self.groq_model or os.getenv("GROQ_MODEL", "llama-3.1-70b-versatile")
+        self.groq_model = self.groq_model or os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
 
     def search(self, query: str, max_results: int = 50) -> list[Paper]:
         _validate(query, max_results)
@@ -466,13 +466,13 @@ def _alphaxiv_argument_sets(query: str, difficulty: int, groq_api_key: str | Non
 def _groq_alphaxiv_argument_sets(query: str, difficulty: int, api_key: str | None, model: str | None) -> list[dict[str, Any]]:
     if not api_key:
         return []
-    prompt = f"Return strict JSON with a plans list for alphaXiv discovery. User topic: {query!r}. Base difficulty: {difficulty}."
+    prompt = f'Return strict JSON only in this shape: {{"plans":[{{"keywords":["term 1","term 2"],"question":"focused paper-discovery question","difficulty":{difficulty}}}]}}. Return at most two plans, each with 1-4 keywords. User topic: {query!r}.'
     try:
         with httpx.Client(timeout=30.0) as client:
             response = client.post(
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"authorization": f"Bearer {api_key}", "content-type": "application/json"},
-                json={"model": model or "llama-3.1-70b-versatile", "messages": [{"role": "system", "content": "Return only valid JSON. No markdown."}, {"role": "user", "content": prompt}], "temperature": 0.2, "response_format": {"type": "json_object"}},
+                json={"model": model or "llama-3.3-70b-versatile", "messages": [{"role": "system", "content": "Return only valid JSON. No markdown."}, {"role": "user", "content": prompt}], "temperature": 0.2, "response_format": {"type": "json_object"}},
             )
             response.raise_for_status()
             content = response.json()["choices"][0]["message"]["content"]

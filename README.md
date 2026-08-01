@@ -48,7 +48,7 @@ Streamlit UI / API       display the answer with source cards
 
 ## Follow-up
 
-The work completed so far was developed in three parts: a deterministic ingestion foundation, an improved discovery stage, and section-aware chunking for retrieval.
+The work completed so far was developed in five parts: ingestion, improved discovery, section-aware chunking, dense/sparse indexing, and an evaluated hybrid retrieval stack. The generation layer is still planned and is not required for retrieval evaluation.
 
 ### Part 1: Ingestion - 06/07/2026
 
@@ -108,3 +108,23 @@ This part completes the first retrieval-ready processing pipeline by adding dens
 | `tests/unit/test_bm25_indexer.py` | Tests index construction, ranking, `top_k`, empty inputs, persistence, restoration, and post-load search. |
 
 **Part 4 summary:** locally ingested papers can now be transformed into stable section-aware chunks, dense MiniLM embeddings, and a persistent BM25 sparse index for later retrieval.
+
+### Part 5: Retrieval and evaluation - 27/07/2026
+
+This part implements the production retrieval stages and adds reproducible notebooks for integration testing and retrieval-quality evaluation.
+
+| File | Summary |
+|---|---|
+| `retrieval/dense_retriever.py` | Embeds queries and searches a cosine Qdrant collection with payload filters, score thresholds, health checks, and dimension validation. |
+| `retrieval/sparse_retriever.py` | Loads trusted project-generated BM25 artifacts and returns filtered, backend-neutral retrieval results. |
+| `retrieval/hybrid_retriever.py` | Combines dense and sparse rankings using Reciprocal Rank Fusion, deduplicates chunks, and preserves result provenance. |
+| `retrieval/reranker.py` | Reranks candidate chunks with `cross-encoder/ms-marco-MiniLM-L-6-v2`; injected models support deterministic offline tests. |
+| `retrieval/mmr_sampler.py` | Applies Maximal Marginal Relevance to balance query relevance and result diversity. |
+| `retrieval/retriever_factory.py` | Builds validated dense, sparse, or nested hybrid retrievers from configuration and injected runtime dependencies. |
+| `notebooks/06_retrieval_stack_testbench.ipynb` | Runs all production retrieval components end to end with deterministic offline dependencies. |
+| `notebooks/07_retrieval_evaluation.ipynb` | Runs local PDFs through ingestion, processing, MiniLM/Qdrant and BM25 retrieval, then reports Hit@K, Precision@K, Recall@K, MRR, nDCG, latency, and query-level diagnostics. |
+| `tests/unit/test_advanced_retrieval.py` | Tests RRF fusion, cross-encoder reranking, MMR selection, validation behavior, and factory construction without external services. |
+
+The executed evaluation currently covers 5 local papers, 530 section-aware chunks, and 10 manually labelled queries. All tested configurations ranked the relevant paper first for every query. This confirms the pipeline works, but the benchmark is too small and easy to select a winning configuration.
+
+**Part 5 summary:** the project can now evaluate retrieval independently of generation across dense, sparse, hybrid, reranked, and diversity-aware configurations. The next evaluation milestone is a larger independently labelled corpus with paraphrased questions, hard negatives, multi-relevant queries, chunk-level judgments, and the real MS MARCO cross-encoder.

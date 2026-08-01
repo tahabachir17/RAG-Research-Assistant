@@ -66,7 +66,7 @@ def _paper(paper_id, title, summary, doi=None):
 
 def test_detect_section_headings():
     assert detect_section("Abstract") == "abstract"
-    assert detect_section("2 Methodology") == "method"
+    assert detect_section("2 Methodology") == "methodology"
     assert detect_section("This method improves recall") is None
 
 

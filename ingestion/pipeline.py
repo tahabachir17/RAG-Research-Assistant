@@ -164,6 +164,8 @@ class IngestionPipeline:
             "raw_document": raw_document,
             "sections": sectioned_document["sections"],
             "section_spans": sectioned_document.get("section_spans", {}),
+            "section_details": sectioned_document.get("section_details", []),
+            "heading_diagnostics": sectioned_document.get("heading_diagnostics", []),
             "citations": citations,
         }
         output_path.write_text(
@@ -228,5 +230,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-
-

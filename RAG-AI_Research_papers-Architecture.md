@@ -847,5 +847,11 @@ streamlit run frontend/app.py
 ```
 
 ---
+## License
 
+[MIT](LICENSE)
+
+---
+
+Built by [Taha](https://github.com/<your-username>) as an open-source exploration of production-grade RAG systems.
 *Architecture version 1.0 — RAG Research Assistant*
