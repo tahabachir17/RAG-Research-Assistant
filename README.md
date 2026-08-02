@@ -128,3 +128,19 @@ This part implements the production retrieval stages and adds reproducible noteb
 The executed evaluation currently covers 5 local papers, 530 section-aware chunks, and 10 manually labelled queries. All tested configurations ranked the relevant paper first for every query. This confirms the pipeline works, but the benchmark is too small and easy to select a winning configuration.
 
 **Part 5 summary:** the project can now evaluate retrieval independently of generation across dense, sparse, hybrid, reranked, and diversity-aware configurations. The next evaluation milestone is a larger independently labelled corpus with paraphrased questions, hard negatives, multi-relevant queries, chunk-level judgments, and the real MS MARCO cross-encoder.
+
+### Part 6: Scalable ingestion and retrieval-triggered enrichment - 01/08/2026
+
+This part makes the corpus resumable and lets retrieval expand it only when the static indexes are insufficient.
+
+| File | Summary |
+|---|---|
+| `ingestion/identity.py` | Normalizes modern, versioned, URL, and legacy ArXiv identifiers into one canonical corpus identity. |
+| `ingestion/corpus_registry.py` | Uses SQLite as the authoritative paper/checkpoint registry and atomically exports `papers.json`. |
+| `ingestion/pdf_downloader.py` | Stores PDFs in a flat canonical-ID layout, retries transient HTTP failures, validates PDFs, and atomically promotes `.part` downloads. |
+| `ingestion/pipeline.py` | Supports `--resume`, direct selected-paper ingestion, durable per-paper states, flat processed output, and atomic JSON writes. |
+| `retrieval/fallback_retriever.py` | Runs static retrieval first; when its relevance gate fails, it discovers and ingests papers, rebuilds BM25 from every registered processed paper, upserts dense vectors, reloads sparse retrieval, and retries the query. |
+
+`CorpusEnrichmentRetriever` accepts either `min_results`/`min_score` or a custom `relevance_gate(query, results)`. For hybrid RRF output, use a calibrated custom gate based on reranker or dense evidence because RRF scores are rank-fusion values rather than confidence probabilities. Set `bm25_index_path` so the rebuilt sparse corpus is saved and reloaded before the retry.
+
+**Part 6 summary:** a 1000+ paper baseline can be resumed safely, paper identity is independent of category, and missing coverage can be added through the same ingestion and processing code instead of a duplicate live-search path.

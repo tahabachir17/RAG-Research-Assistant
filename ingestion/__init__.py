@@ -2,7 +2,9 @@
 
 from .arxiv_scraper import ArxivScraper, Paper
 from .citation_extractor import Citation, extract_citations
+from .corpus_registry import CorpusRegistry
 from .data_cleaner import clean_sections, clean_text
+from .identity import arxiv_version, canonical_arxiv_id
 from .metadata_extractor import PaperMeta, extract_metadata
 from .paper_discovery import (
     AlphaXivMCPPaperDiscovery,
@@ -26,6 +28,7 @@ __all__ = [
     "ArxivPaperDiscovery",
     "ArxivScraper",
     "Citation",
+    "CorpusRegistry",
     "DownloadResult",
     "FeymanPaperDiscovery",
     "IngestionPipeline",
@@ -40,7 +43,9 @@ __all__ = [
     "ResearchAPIPaperDiscovery",
     "SectionDetector",
     "SectionedDoc",
+    "arxiv_version",
     "build_discovery",
+    "canonical_arxiv_id",
     "clean_sections",
     "clean_text",
     "dedupe_papers",

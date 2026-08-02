@@ -1,6 +1,7 @@
 """Retrieval, fusion, reranking, and diversity primitives."""
 
 from .dense_retriever import DenseRetriever
+from .fallback_retriever import CorpusEnrichmentRetriever
 from .hybrid_retriever import HybridRetriever
 from .mmr_sampler import MMRSampler, maximal_marginal_relevance
 from .models import RetrievalResult
@@ -10,6 +11,7 @@ from .retriever_factory import RetrieverFactory, build_retriever, create_retriev
 from .sparse_retriever import SparseRetriever
 
 __all__ = [
+    "CorpusEnrichmentRetriever",
     "CrossEncoderReranker",
     "DenseRetriever",
     "HybridRetriever",

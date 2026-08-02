@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from .fallback_retriever import CorpusEnrichmentRetriever
 from .dense_retriever import DenseRetriever
 from .hybrid_retriever import HybridRetriever
 from .sparse_retriever import SparseRetriever
@@ -59,6 +60,38 @@ def build_retriever(config: Mapping[str, Any], **dependencies: Any) -> Any:
         options = _take(values, "rrf_k", "default_top_k", "candidate_top_k")
         _reject_unknown(values, kind)
         return HybridRetriever(dense, sparse, **options)
+    if kind in {"fallback", "corpus_enrichment"}:
+        retriever = dependencies.get("retriever", values.pop("retriever", None))
+        discovery = dependencies.get("discovery", values.pop("discovery", None))
+        ingestion = dependencies.get(
+            "ingestion_pipeline", values.pop("ingestion_pipeline", None)
+        )
+        processing = dependencies.get(
+            "processing_pipeline", values.pop("processing_pipeline", None)
+        )
+        for dependency, name in (
+            (retriever, "retriever"),
+            (discovery, "discovery"),
+            (ingestion, "ingestion_pipeline"),
+            (processing, "processing_pipeline"),
+        ):
+            _require(dependency, name, kind)
+        options = _take(
+            values,
+            "bm25_index_path",
+            "max_discovery_results",
+            "min_results",
+            "min_score",
+            "relevance_gate",
+        )
+        _reject_unknown(values, kind)
+        return CorpusEnrichmentRetriever(
+            retriever,
+            discovery=discovery,
+            ingestion_pipeline=ingestion,
+            processing_pipeline=processing,
+            **options,
+        )
     raise ValueError(f"unsupported retriever type: {kind!r}")
 
 

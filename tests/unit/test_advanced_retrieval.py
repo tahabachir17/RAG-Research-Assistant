@@ -1,7 +1,10 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
 from retrieval import (
+    CorpusEnrichmentRetriever,
     CrossEncoderReranker,
     HybridRetriever,
     MMRSampler,
@@ -81,3 +84,93 @@ def test_factory_builds_all_supported_types(tmp_path):
     assert hybrid.rrf_k == 30
     with pytest.raises(ValueError, match="unsupported"):
         build_retriever({"type": "unknown"})
+
+
+class _Registry:
+    def __init__(self, processed_path):
+        self.processed_path = processed_path
+        self.marks = []
+
+    def records(self):
+        return [
+            {
+                "status": "processed",
+                "processed_path": str(self.processed_path),
+            }
+        ]
+
+    def get(self, paper_id):
+        return {"status": "processed"}
+
+    def mark(self, paper_id, status):
+        self.marks.append((paper_id, status))
+
+
+class _Ingestion:
+    def __init__(self, registry):
+        self.registry = registry
+        self.selected = None
+
+    def run(self, query, max_results, selected_papers):
+        self.selected = selected_papers
+        return SimpleNamespace(processed=len(selected_papers))
+
+
+class _BM25:
+    def __init__(self):
+        self.saved = None
+
+    def save(self, path):
+        self.saved = path
+
+
+class _Processing:
+    def __init__(self):
+        self.bm25_indexer = _BM25()
+        self.paths = None
+
+    def process_paths(self, paths, **kwargs):
+        self.paths = paths
+        return {"bm25_documents": 1, "qdrant_points": 1}
+
+
+class _Discovery:
+    def __init__(self, papers):
+        self.papers = papers
+
+    def search(self, query, max_results):
+        return self.papers[:max_results]
+
+
+def test_corpus_enrichment_retrieves_ingests_indexes_and_retries(tmp_path):
+    processed = tmp_path / "paper.json"
+    processed.write_text("{}", encoding="utf-8")
+    paper = SimpleNamespace(paper_id="2005.11401")
+    retriever = _Retriever([])
+    retriever.results = []
+    calls = 0
+
+    def changing_search(query, **kwargs):
+        nonlocal calls
+        calls += 1
+        return [] if calls == 1 else [_result("enriched", 0.9)]
+
+    retriever.search = changing_search
+    registry = _Registry(processed)
+    ingestion = _Ingestion(registry)
+    processing = _Processing()
+    fallback = CorpusEnrichmentRetriever(
+        retriever,
+        discovery=_Discovery([paper]),
+        ingestion_pipeline=ingestion,
+        processing_pipeline=processing,
+        bm25_index_path=tmp_path / "bm25.pkl",
+    )
+
+    results = fallback.search("new topic", top_k=3)
+
+    assert [result.chunk_id for result in results] == ["enriched"]
+    assert calls == 2
+    assert ingestion.selected == [paper]
+    assert processing.paths == [processed]
+    assert registry.marks == [("2005.11401", "indexed")]
