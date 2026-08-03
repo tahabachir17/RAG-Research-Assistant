@@ -17,7 +17,7 @@ Keeping up with AI research means wading through hundreds of papers. Most RAG de
 - **Hybrid retrieval** — dense (semantic) search fused with BM25 (keyword) search via Reciprocal Rank Fusion
 - **Cross-encoder reranking** — a second, more precise pass re-scores the top candidates before they reach the LLM
 - **Cited, grounded answers** — every answer references the specific papers and sections it draws from, and the model is instructed to say so when it doesn't know
-- **RAGAS evaluation** — retrieval and generation quality are measured against a golden Q&A set, not eyeballed
+- **Retrieval-stage evaluation** — dense, sparse, hybrid, reranked, and MMR stages are measured independently from generation using Recall, Precision, MRR, nDCG, and latency
 - **Chat + explore + evaluate UI** — a Streamlit app for asking questions, browsing the corpus, and viewing quality metrics
 - **One-command deployment** — the full stack runs via Docker Compose
 
@@ -48,7 +48,7 @@ Streamlit UI / API       display the answer with source cards
 
 ## Follow-up
 
-The work completed so far was developed in five parts: ingestion, improved discovery, section-aware chunking, dense/sparse indexing, and an evaluated hybrid retrieval stack. The generation layer is still planned and is not required for retrieval evaluation.
+The work completed so far was developed in seven parts: ingestion, improved discovery, section-aware chunking, dense/sparse indexing, the retrieval stack, scalable resumable ingestion, and retrieval-stage evaluation. The generation layer is still planned and is not required for retrieval evaluation.
 
 ### Part 1: Ingestion - 06/07/2026
 
@@ -125,7 +125,7 @@ This part implements the production retrieval stages and adds reproducible noteb
 | `notebooks/07_retrieval_evaluation.ipynb` | Runs local PDFs through ingestion, processing, MiniLM/Qdrant and BM25 retrieval, then reports Hit@K, Precision@K, Recall@K, MRR, nDCG, latency, and query-level diagnostics. |
 | `tests/unit/test_advanced_retrieval.py` | Tests RRF fusion, cross-encoder reranking, MMR selection, validation behavior, and factory construction without external services. |
 
-The executed evaluation currently covers 5 local papers, 530 section-aware chunks, and 10 manually labelled queries. All tested configurations ranked the relevant paper first for every query. This confirms the pipeline works, but the benchmark is too small and easy to select a winning configuration.
+The original notebook evaluation covers 5 local papers, 530 section-aware chunks, and 10 manually labelled queries. All tested configurations ranked the relevant paper first for every query. This confirms the pipeline works, but that benchmark is too small and easy to select a winning configuration. The larger persisted-corpus ablation is documented in Part 7.
 
 **Part 5 summary:** the project can now evaluate retrieval independently of generation across dense, sparse, hybrid, reranked, and diversity-aware configurations. The next evaluation milestone is a larger independently labelled corpus with paraphrased questions, hard negatives, multi-relevant queries, chunk-level judgments, and the real MS MARCO cross-encoder.
 
@@ -140,7 +140,45 @@ This part makes the corpus resumable and lets retrieval expand it only when the 
 | `ingestion/pdf_downloader.py` | Stores PDFs in a flat canonical-ID layout, retries transient HTTP failures, validates PDFs, and atomically promotes `.part` downloads. |
 | `ingestion/pipeline.py` | Supports `--resume`, direct selected-paper ingestion, durable per-paper states, flat processed output, and atomic JSON writes. |
 | `retrieval/fallback_retriever.py` | Runs static retrieval first; when its relevance gate fails, it discovers and ingests papers, rebuilds BM25 from every registered processed paper, upserts dense vectors, reloads sparse retrieval, and retries the query. |
+| `tests/unit/test_ingestion_registry.py` | Tests registry state transitions, checkpoint persistence, resume behavior, identity normalization, and recovery after partial ingestion failures. |
 
 `CorpusEnrichmentRetriever` accepts either `min_results`/`min_score` or a custom `relevance_gate(query, results)`. For hybrid RRF output, use a calibrated custom gate based on reranker or dense evidence because RRF scores are rank-fusion values rather than confidence probabilities. Set `bm25_index_path` so the rebuilt sparse corpus is saved and reloaded before the retry.
 
 **Part 6 summary:** a 1000+ paper baseline can be resumed safely, paper identity is independent of category, and missing coverage can be added through the same ingestion and processing code instead of a duplicate live-search path.
+
+### Part 7: Retrieval-stage ablation on the persisted corpus - 03/08/2026
+
+This part isolates retrieval quality from answer generation and evaluates every retrieval stage against the same ranked relevance judgments. It runs dense-only, sparse-only, hybrid RRF, hybrid plus the real MS MARCO cross-encoder, and hybrid plus reranking and MMR. Rankings and results are cached so failures can be inspected without invoking an LLM.
+
+| File | Summary |
+|---|---|
+| `evaluation/data/golden_retrieval.json` | Contains 50 retrieval questions with paper relevance labels and fields for reviewed chunk IDs. Ten questions come from the earlier notebook; 40 title-derived bootstrap questions are explicitly marked as requiring review. |
+| `evaluation/bootstrap_retrieval_golden.py` | Rebuilds the reviewable 50-question seed set from the ingestion registry when a chunk-labelled golden set does not exist yet. |
+| `evaluation/label_retrieval.py` | Creates a top-20 candidate dump and provides a lightweight CLI for accepting or rejecting relevant chunks. Progress is saved after each question. |
+| `evaluation/metrics.py` | Implements stage-agnostic Hit@k, Precision@k, Recall@k, reciprocal rank, and binary nDCG@k over any ranked identifier list. |
+| `evaluation/retrieval_evaluator.py` | Executes and times the five-stage ablation, measures reranker lift, identifies universal failures, and writes timestamped JSON, CSV, Markdown, and cache artifacts. |
+| `tests/unit/test_retrieval_evaluator.py` | Verifies stage-agnostic metric calculations and the targeted reranker-promotion measurement. |
+
+The 03/08/2026 run evaluated 50 questions against the persisted corpus (99,141 BM25 chunks plus the Qdrant dense index) using `cross-encoder/ms-marco-MiniLM-L-6-v2` rather than the notebook proxy. Latency is cumulative for each named configuration.
+
+| Configuration | Recall@5 | Recall@8 | Recall@20 | MRR | nDCG@20 | Average latency |
+|---|---:|---:|---:|---:|---:|---:|
+| Dense | 0.820 | 0.820 | 0.820 | 0.820 | 0.820 | 524 ms |
+| Sparse | 0.820 | **0.840** | **0.840** | 0.780 | 0.795 | 1,428 ms |
+| Hybrid RRF | 0.820 | 0.820 | 0.820 | 0.820 | 0.820 | 1,952 ms |
+| Hybrid + rerank | 0.820 | 0.820 | 0.820 | 0.820 | 0.820 | 10,679 ms |
+| Hybrid + rerank + MMR | 0.820 | 0.820 | 0.820 | 0.820 | 0.820 | 14,012 ms |
+
+Sparse retrieval produced the best Recall@8 and Recall@20. Hybrid did not strictly beat both single retrievers on any reported metric. Reranking produced no Recall@8 lift (`0.820 -> 0.820`) while adding about 8.7 seconds per query, and MMR added another 3.3 seconds without improving these paper-level metrics. Eight questions failed in every configuration because their relevant papers had no chunks in the BM25 artifact, identifying an ingestion/index synchronization gap rather than a ranking failure.
+
+The current run is a diagnostic baseline, not a publication-quality comparison: none of the 50 questions has completed chunk-level review, and the 40 title-derived questions make the benchmark easier than independently authored paraphrases would be. Use the review CLI before making architecture decisions from these numbers.
+
+```powershell
+# Run the full retrieval ablation and save timestamped artifacts.
+.\venv\Scripts\python.exe -m evaluation.retrieval_evaluator --candidate-k 20
+
+# Generate top-20 candidates and review chunk relevance interactively.
+.\venv\Scripts\python.exe -m evaluation.label_retrieval
+```
+
+**Part 7 summary:** on the current paper-level diagnostic set, sparse retrieval provides the highest recall, while hybrid fusion, the cross-encoder, and MMR do not earn their additional latency. The next valid comparison requires reviewed chunk labels, independently written questions, hard negatives, and reindexing the eight missing papers.
