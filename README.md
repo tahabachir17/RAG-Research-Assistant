@@ -39,7 +39,7 @@ Cross-Encoder Reranker   re-score top candidates for precision
 Context Assembler        build a prompt from the retrieved chunks
     │
     ▼
-LLM (Groq API)         generate a grounded, cited answer
+LLM provider adapter    Claude / OpenAI / Ollama, sync or streaming
     │
     ▼
 Streamlit UI / API       display the answer with source cards
@@ -48,7 +48,7 @@ Streamlit UI / API       display the answer with source cards
 
 ## Follow-up
 
-The work completed so far was developed in seven parts: ingestion, improved discovery, section-aware chunking, dense/sparse indexing, the retrieval stack, scalable resumable ingestion, and retrieval-stage evaluation. The generation layer is still planned and is not required for retrieval evaluation.
+The work completed so far was developed in eight parts: ingestion, improved discovery, section-aware chunking, dense/sparse indexing, the retrieval stack, scalable resumable ingestion, retrieval-stage evaluation, and generation. Retrieval and generation remain independently testable so failures can be attributed to the correct layer.
 
 ### Part 1: Ingestion - 06/07/2026
 
@@ -182,3 +182,57 @@ The current run is a diagnostic baseline, not a publication-quality comparison: 
 ```
 
 **Part 7 summary:** on the current paper-level diagnostic set, sparse retrieval provides the highest recall, while hybrid fusion, the cross-encoder, and MMR do not earn their additional latency. The next valid comparison requires reviewed chunk labels, independently written questions, hard negatives, and reindexing the eight missing papers.
+
+### Part 8: Grounded answer generation - 03/08/2026
+
+This part turns ranked `RetrievalResult` chunks into bounded prompts and structured cited answers without coupling provider SDK objects to the rest of the application.
+
+| File | Summary |
+|---|---|
+| `config/settings.py` | Centralizes provider, model, API-key, token-limit, and temperature settings with Pydantic `BaseSettings`. |
+| `config/prompts/*.yaml` | Defines strict Jinja templates for cited Q&A, summarization, paper comparison, and HyDE retrieval expansion. |
+| `generation/prompt_manager.py` | Loads and caches YAML prompts, rejects unsafe names and malformed templates, and fails clearly when required variables are missing. |
+| `generation/context_assembler.py` | Converts ranked retrieval results into numbered, whole-chunk context blocks with a configurable token budget and citation map. |
+| `generation/citation_handler.py` | Validates numeric citation markers, reports unknown and unused citations, and builds an ordered source list containing only cited retrieval evidence. |
+| `generation/llm_client.py` | Provides injectable synchronous and asynchronous clients for Claude, OpenAI, and Ollama; streaming exposes plain text deltas and provider failures become `LLMClientError`. |
+| `generation/streaming_handler.py` | Produces incremental text or SSE-ready token/done events while buffering the complete answer for final citation validation. |
+| `generation/response_formatter.py` | Owns the chat response contract: answer, cited sources, latency, citation validity, and unknown citation numbers. |
+| `generation/cli.py` | Provides an offline-by-default smoke harness, optional evaluator-result loading, streamed event output, and opt-in live provider calls. |
+| Six focused `tests/unit/test_*.py` generation test modules | Exercise prompt errors, context limits, citation failures, all provider branches, streaming interruption, and response formatting without network calls. |
+
+The validated local flow is: `RetrievalResult` → numbered context → rendered prompt → injected LLM response → citation validation → `GeneratedAnswer.to_dict()`. The complete test suite currently passes 94 tests.
+
+Known limitations are explicit: API and frontend integration are not part of this milestone; provider tests use injected clients rather than live services; streaming interruptions propagate without a false completion event; and unknown citations are reported rather than silently removed or rewritten. Source fields unavailable in `RetrievalResult` remain `null` or empty until a richer metadata lookup is connected.
+
+```powershell
+# Deterministic offline smoke test.
+.\venv\Scripts\python.exe -m generation.cli
+
+# Inspect SSE-ready token and completion events.
+.\venv\Scripts\python.exe -m generation.cli --events
+
+# Test generation from one saved retrieval-evaluation ranking.
+.\venv\Scripts\python.exe -m generation.cli --results-json evaluation\data\eval_results\retrieval_eval_<timestamp>.json --config hybrid_rerank --query-id <query_id>
+
+# Full local RAG test: prompt -> BM25 retrieval -> Groq -> cited full chunks.
+.\venv\Scripts\python.exe -m generation.cli "How does scaled dot-product attention work, and why is scaling needed?" --retrieve --live --provider groq
+
+The RAG CLI retrieves 30 BM25 candidates by default, excludes references,
+bibliography, front matter, and acknowledgements, then selects 8 while allowing
+at most 2 chunks per normalized paper ID and 1 chunk per paper section. Override
+the diversity controls with `--candidate-k`, `--top-k`,
+`--max-chunks-per-paper`, and `--max-chunks-per-section`. For diagnostics,
+`--include-low-information-sections` restores the excluded sections.
+
+For higher semantic precision, add `--rerank`. This loads the cached
+`cross-encoder/ms-marco-MiniLM-L-6-v2` model, reranks the BM25 candidate pool
+before diversity selection, and can add substantial CPU latency:
+
+```powershell
+.\venv\Scripts\python.exe -m generation.cli "YOUR QUESTION" --retrieve --rerank --candidate-k 20 --live --provider groq
+```
+
+# Opt into a real configured provider.
+.\venv\Scripts\python.exe -m generation.cli --live --provider ollama --model llama3.1 --stream
+```
+**Part 8 summary:** generation is now a self-contained, provider-neutral layer that produces auditable cited responses from retrieval output. The next integration step is to connect it to `/api/v1/chat`, add request-level orchestration and observability, and evaluate answer correctness and faithfulness separately from retrieval quality.

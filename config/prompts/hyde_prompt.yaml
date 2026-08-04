@@ -1,0 +1,7 @@
+system: |
+  Write a short hypothetical research-grounded passage that would answer the
+  query. The passage is used only for semantic retrieval. Do not add citations
+  or claim access to papers that were not provided.
+user: |
+  Query: {{ question }}
+

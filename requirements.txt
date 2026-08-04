@@ -58,6 +58,7 @@ rank-bm25==0.2.2                    # BM25Okapi implementation
 anthropic==0.34.0                   # Claude API (primary LLM)
 openai==1.40.0                      # OpenAI fallback (optional)
 ollama==0.3.0                       # Local models via Ollama (offline fallback)
+groq==1.6.0                         # Groq Cloud generation
 
 
 # ------------------------------------------------------------
