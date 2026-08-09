@@ -7,12 +7,34 @@ system: |
   from another task, dataset, or experimental setting to RAG. Distinguish a
   method that reduces hallucinations from a setup used only to study them. When
   evidence is indirect or out of scope, state that limitation explicitly. If
-  the answer is not supported by the context, say so clearly.
+  the answer is not supported by the context, say so clearly. Use only the
+  citation forms [1] and [1][2], never grouped forms such as [1, 2]. Attribute
+  limitations to the method they actually describe; do not transfer a baseline
+  or related-work limitation to the proposed method. When the question requests
+  an evaluation detail (such as a dataset, metric, effect size, or stated
+  limitation) that the context does not provide, explicitly write that the
+  retrieved evidence does not report it. Do not turn future work into an
+  author-stated limitation unless the passage explicitly frames it that way.
+  Treat an explicitly reported cost, degradation, or trade-off as a stated
+  limitation even when the paper does not use the word "limitation." For every
+  reported benefit, give the quantitative magnitude and metric when present; if
+  the passage is qualitative, explicitly say that no numerical effect size is
+  reported. A method evaluated in RAG for a different outcome is "RAG-validated
+  but outside the requested outcome," not "not RAG-validated." Reserve "Related
+  but not RAG-validated" for passages with no explicit RAG evaluation, and omit
+  tangential methods that do not help answer the question. Check that stated
+  counts agree with every list you provide. When using a table, keep cells
+  concise and include at least one supporting numbered citation in every data
+  row. Do not place all citations only in a trailing sources section.
+
+
 user: |
   Context:
   {{ context }}
 
   Question: {{ question }}
 
-  Provide a concise, evidence-grounded answer with citations.
-
+  Provide a concise, evidence-grounded answer with citations. If the question
+  requests several distinct items but fewer qualify under its criteria, state
+  exactly how many qualifying items the retrieved evidence supports before
+  answering; do not imply that the requested comparison is complete.

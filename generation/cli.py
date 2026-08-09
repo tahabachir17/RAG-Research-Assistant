@@ -1,7 +1,7 @@
 """Minimal command-line harness for exercising the generation layer.
 
 Offline mode is deterministic and requires no credentials. Use ``--live`` with
-``--provider`` to call a configured Groq, Claude, OpenAI, or Ollama model.
+``--provider`` to call a configured Groq, Claude, OpenAI, LM Studio, or Ollama model.
 """
 
 from __future__ import annotations
@@ -10,8 +10,10 @@ import argparse
 import asyncio
 import json
 import re
+import sys
 import time
 from collections.abc import AsyncIterator, Collection, Iterator, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +25,14 @@ DEFAULT_EXCLUDED_SECTIONS = frozenset(
         "acknowledgements",
         "acknowledgments",
     }
+)
+EVIDENCE_QUERY_SUFFIXES = (
+    "method approach retrieval selection filtering reranking",
+    "experiment evaluation dataset benchmark metric results improvement",
+    "limitations drawbacks failure cases computational cost future work",
+)
+_EXPLICIT_RAG_EVIDENCE = re.compile(
+    r"\bretrieval[\s-]*augmented[\s-]*generation\b|\bRAG\b", re.IGNORECASE
 )
 
 
@@ -48,6 +58,7 @@ try:
     from .llm_client import LLMClient, build_llm_client
     from .prompt_manager import PromptManager
     from .response_formatter import GeneratedAnswer, format_response
+    from .response_validator import ResponseValidator, generate_with_validation
     from .streaming_handler import stream_answer_events
 except ImportError:
     from citation_handler import validate_citations
@@ -55,6 +66,7 @@ except ImportError:
     from llm_client import LLMClient, build_llm_client
     from prompt_manager import PromptManager
     from response_formatter import GeneratedAnswer, format_response
+    from response_validator import ResponseValidator, generate_with_validation
     from streaming_handler import stream_answer_events
 
 
@@ -93,29 +105,40 @@ def run_generation(
     template_name: str = "qa_prompt",
     max_context_tokens: int = 1000,
     show_prompt: bool = False,
+    required_fields: Sequence[str] = (),
+    max_items: int | None = None,
+    max_retries: int | None = None,
 ) -> GeneratedAnswer:
-    """Run the non-streaming generation chain and return its structured result."""
+    """Run generation through deterministic validation and one repair attempt."""
 
     started_at = time.monotonic()
-    context = ContextAssembler(max_context_tokens=max_context_tokens).assemble(
-        ranked_results
-    )
+    context = ContextAssembler(max_context_tokens=max_context_tokens).assemble(ranked_results)
     if not context.citation_map:
         raise ValueError("No complete retrieval chunk fits in the context budget")
-    system, user = PromptManager().render(
-        template_name, context=context.context_block, question=question
-    )
+    system, user = PromptManager().render(template_name, context=context.context_block, question=question)
     if show_prompt:
         print("--- SYSTEM ---")
         print(system)
         print("--- USER ---")
         print(user)
-    client = llm or OfflineDemoClient()
-    answer = client.complete(system, user)
-    if not isinstance(answer, str):
-        raise TypeError("non-streaming LLM completion returned an iterator")
-    validation = validate_citations(answer, context.citation_map)
-    return format_response(answer, context, validation, started_at)
+    retries = Settings().GENERATION_MAX_RETRIES if max_retries is None else max_retries
+    outcome = generate_with_validation(
+        llm or OfflineDemoClient(),
+        system,
+        user,
+        ResponseValidator(context.citation_map, required_fields=required_fields, max_items=max_items),
+        max_retries=retries,
+    )
+    citation_validation = validate_citations(outcome.answer, context.citation_map)
+    return format_response(
+        outcome.answer,
+        context,
+        citation_validation,
+        started_at,
+        finish_reason=outcome.finish_reason,
+        final_attempt=outcome.final_attempt,
+        validation_failures=outcome.validation.failures,
+    )
 
 
 async def run_streaming_generation(
@@ -197,7 +220,7 @@ def diversify_ranked_results(
     max_chunks_per_section: int = 1,
     excluded_sections: Collection[str] = DEFAULT_EXCLUDED_SECTIONS,
 ) -> list[RetrievalResult]:
-    """Filter low-information sections and limit redundant paper evidence."""
+    """Filter low-information sections while prioritizing distinct papers."""
 
     _positive_integer(top_k, "top_k")
     _positive_integer(max_chunks_per_paper, "max_chunks_per_paper")
@@ -209,27 +232,108 @@ def diversify_ranked_results(
     section_counts: dict[tuple[str, str], int] = {}
     seen_chunks: set[str] = set()
     selected: list[RetrievalResult] = []
-    for candidate in candidates:
+
+    def consider(candidate: RetrievalResult, *, paper_limit: int) -> None:
+        if len(selected) >= top_k:
+            return
         if not isinstance(candidate, RetrievalResult):
             raise TypeError("candidates may contain only RetrievalResult objects")
         if candidate.chunk_id in seen_chunks:
-            continue
+            return
         section = _normalized_section_name(candidate.section or "unknown")
         if section in excluded:
-            continue
+            return
         paper_key = _normalized_paper_key(candidate)
         section_key = (paper_key, section)
-        if paper_counts.get(paper_key, 0) >= max_chunks_per_paper:
-            continue
+        if paper_counts.get(paper_key, 0) >= paper_limit:
+            return
         if section_counts.get(section_key, 0) >= max_chunks_per_section:
-            continue
+            return
         selected.append(candidate)
         seen_chunks.add(candidate.chunk_id)
         paper_counts[paper_key] = paper_counts.get(paper_key, 0) + 1
         section_counts[section_key] = section_counts.get(section_key, 0) + 1
-        if len(selected) == top_k:
-            break
+
+    # Cover distinct papers/methods before adding complementary sections from
+    # papers already represented in the context.
+    for candidate in candidates:
+        consider(candidate, paper_limit=1)
+    if len(selected) < top_k and max_chunks_per_paper > 1:
+        for candidate in candidates:
+            consider(candidate, paper_limit=max_chunks_per_paper)
     return selected
+
+
+def build_evidence_queries(question: str) -> list[str]:
+    """Build focused retrieval queries for methods, evaluation, and limits."""
+
+    if not isinstance(question, str):
+        raise TypeError("question must be a string")
+    normalized = " ".join(question.split())
+    if not normalized:
+        raise ValueError("question must not be empty")
+    first_sentence = re.split(r"(?<=[.!?])\s+", normalized, maxsplit=1)[0]
+    base = first_sentence if len(normalized.split()) >= 16 else normalized
+    return [normalized, *(f"{base} {suffix}" for suffix in EVIDENCE_QUERY_SUFFIXES)]
+
+
+def fuse_query_results(
+    rankings: Sequence[Sequence[RetrievalResult]], *, rrf_k: int = 60
+) -> list[RetrievalResult]:
+    """Fuse multi-query rankings by chunk ID using reciprocal-rank fusion."""
+
+    _positive_integer(rrf_k, "rrf_k")
+    scores: dict[str, float] = {}
+    representatives: dict[str, RetrievalResult] = {}
+    first_seen: dict[str, int] = {}
+    order = 0
+    for ranking in rankings:
+        for rank, result in enumerate(ranking, start=1):
+            if not isinstance(result, RetrievalResult):
+                raise TypeError("rankings may contain only RetrievalResult objects")
+            scores[result.chunk_id] = scores.get(result.chunk_id, 0.0) + 1.0 / (
+                rrf_k + rank
+            )
+            if result.chunk_id not in representatives:
+                representatives[result.chunk_id] = result
+                first_seen[result.chunk_id] = order
+                order += 1
+    ranked_ids = sorted(scores, key=lambda key: (-scores[key], first_seen[key]))
+    return [
+        replace(representatives[key], score=scores[key], source="multi_query_sparse")
+        for key in ranked_ids
+    ]
+
+
+def prioritize_explicit_rag_evidence(
+    question: str, candidates: Sequence[RetrievalResult]
+) -> list[RetrievalResult]:
+    """Prioritize passage-level RAG evidence when the question requires it."""
+
+    if not isinstance(question, str):
+        raise TypeError("question must be a string")
+    if isinstance(candidates, (str, bytes)) or not isinstance(candidates, Sequence):
+        raise TypeError("candidates must be a sequence of RetrievalResult objects")
+    if any(not isinstance(item, RetrievalResult) for item in candidates):
+        raise TypeError("candidates may contain only RetrievalResult objects")
+    normalized = question.casefold()
+    requires_explicit_rag = (
+        "explicit" in normalized or "only classify" in normalized
+    ) and (
+        "retrieval-augmented generation" in normalized
+        or re.search(r"\brag\b", normalized) is not None
+    )
+    if not requires_explicit_rag:
+        return list(candidates)
+    explicit = [
+        candidate
+        for candidate in candidates
+        if _EXPLICIT_RAG_EVIDENCE.search(candidate.text)
+    ]
+    explicit_ids = {candidate.chunk_id for candidate in explicit}
+    return explicit + [
+        candidate for candidate in candidates if candidate.chunk_id not in explicit_ids
+    ]
 
 
 def retrieve_ranked_results(
@@ -242,6 +346,7 @@ def retrieve_ranked_results(
     max_chunks_per_section: int = 1,
     excluded_sections: Collection[str] = DEFAULT_EXCLUDED_SECTIONS,
     reranker: Any | None = None,
+    expand_evidence_queries: bool = True,
 ) -> list[RetrievalResult]:
     """Search broadly, then select diverse evidence from the local BM25 corpus."""
 
@@ -249,9 +354,15 @@ def retrieve_ranked_results(
     candidate_limit = top_k if candidate_k is None else candidate_k
     _positive_integer(candidate_limit, "candidate_k")
     candidate_limit = max(top_k, candidate_limit)
-    candidates = SparseRetriever(
-        index_path, default_top_k=candidate_limit
-    ).search(question)
+    retriever = SparseRetriever(index_path, default_top_k=candidate_limit)
+    queries = (
+        build_evidence_queries(question) if expand_evidence_queries else [question]
+    )
+    rankings = [retriever.search(query) for query in queries]
+    candidates = fuse_query_results(rankings) if len(rankings) > 1 else rankings[0]
+    candidates = prioritize_explicit_rag_evidence(question, candidates)
+    # Keep cross-encoder work bounded even though several sparse runs were fused.
+    candidates = candidates[:candidate_limit]
     if reranker is not None:
         rerank = getattr(reranker, "rerank", None)
         if not callable(rerank):
@@ -272,7 +383,9 @@ def retrieve_ranked_results(
 def build_local_reranker(model_path: str | Path | None = None) -> CrossEncoderReranker:
     """Build the cross-encoder from an explicit path or the project model cache."""
 
-    resolved = Path(model_path) if model_path is not None else _cached_reranker_snapshot()
+    resolved = (
+        Path(model_path) if model_path is not None else _cached_reranker_snapshot()
+    )
     if resolved is None or not resolved.is_dir():
         raise FileNotFoundError(
             "No local cross-encoder snapshot was found; provide --reranker-model"
@@ -344,7 +457,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
     if args.retrieve and not args.live:
-        parser.error("--retrieve requires --live to avoid the fixed offline demo answer")
+        parser.error(
+            "--retrieve requires --live to avoid the fixed offline demo answer"
+        )
     if args.rerank and not args.retrieve:
         parser.error("--rerank requires --retrieve")
     if args.retrieve:
@@ -363,6 +478,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             reranker=(
                 build_local_reranker(args.reranker_model) if args.rerank else None
             ),
+            expand_evidence_queries=not args.no_evidence_query_expansion,
         )
     else:
         results = load_ranked_results(
@@ -393,8 +509,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         payload = response.to_dict()
         if args.retrieve:
             payload = add_retrieved_evidence(payload, results)
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        print(_console_json(payload))
     return 0
+
+
+def _console_json(payload: Any) -> str:
+    """Serialize CLI output safely for Windows console code pages."""
+
+    return json.dumps(payload, indent=2, ensure_ascii=True)
 
 
 def _live_client(args: argparse.Namespace) -> LLMClient:
@@ -403,6 +525,8 @@ def _live_client(args: argparse.Namespace) -> LLMClient:
         overrides["LLM_PROVIDER"] = args.provider
     if args.model:
         overrides["LLM_MODEL"] = args.model
+    if args.max_tokens is not None:
+        overrides["LLM_MAX_TOKENS"] = args.max_tokens
     return build_llm_client(Settings(**overrides))
 
 
@@ -506,13 +630,25 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         help="Local cross-encoder model directory; defaults to the project cache",
     )
+    parser.add_argument(
+        "--no-evidence-query-expansion",
+        action="store_true",
+        help="Search only the literal question instead of method/evaluation/limitation facets",
+    )
     parser.add_argument("--config", default="hybrid_rerank_mmr")
     parser.add_argument("--query-id")
     parser.add_argument("--template", default="qa_prompt")
     parser.add_argument("--max-context-tokens", type=int, default=4000)
     parser.add_argument("--live", action="store_true")
-    parser.add_argument("--provider", choices=("groq", "claude", "openai", "ollama"))
+    parser.add_argument(
+        "--provider", choices=("groq", "claude", "openai", "lmstudio", "ollama")
+    )
     parser.add_argument("--model")
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        help="Maximum completion tokens for a live model request",
+    )
     output = parser.add_mutually_exclusive_group()
     output.add_argument("--stream", action="store_true", help="Print raw text deltas")
     output.add_argument(

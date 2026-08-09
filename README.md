@@ -1,6 +1,6 @@
 # RAG Research Assistant
 
-Ask questions about AI research papers in plain English and get grounded, cited answers — not a keyword search, not a hallucinated summary.
+Ask questions about AI research papers in plain English and get grounded, cited answers â€” not a keyword search, not a hallucinated summary.
 
 RAG Research Assistant ingests papers from ArXiv, indexes them section-by-section, and answers questions using hybrid retrieval (semantic + keyword search), cross-encoder reranking, and an LLM that's required to cite its sources. Every answer traces back to the exact paper and section it came from.
 
@@ -12,36 +12,36 @@ Keeping up with AI research means wading through hundreds of papers. Most RAG de
 
 ## Features
 
-- **ArXiv ingestion pipeline** — search, download, and parse papers by topic or category
-- **Section-aware chunking** — documents are split by abstract, introduction, methodology, results, and conclusion, not by arbitrary token windows
-- **Hybrid retrieval** — dense (semantic) search fused with BM25 (keyword) search via Reciprocal Rank Fusion
-- **Cross-encoder reranking** — a second, more precise pass re-scores the top candidates before they reach the LLM
-- **Cited, grounded answers** — every answer references the specific papers and sections it draws from, and the model is instructed to say so when it doesn't know
-- **Retrieval-stage evaluation** — dense, sparse, hybrid, reranked, and MMR stages are measured independently from generation using Recall, Precision, MRR, nDCG, and latency
-- **Chat + explore + evaluate UI** — a Streamlit app for asking questions, browsing the corpus, and viewing quality metrics
-- **One-command deployment** — the full stack runs via Docker Compose
+- **ArXiv ingestion pipeline** â€” search, download, and parse papers by topic or category
+- **Section-aware chunking** â€” documents are split by abstract, introduction, methodology, results, and conclusion, not by arbitrary token windows
+- **Hybrid retrieval** â€” dense (semantic) search fused with BM25 (keyword) search via Reciprocal Rank Fusion
+- **Cross-encoder reranking** â€” a second, more precise pass re-scores the top candidates before they reach the LLM
+- **Cited, grounded answers** â€” every answer references the specific papers and sections it draws from, and the model is instructed to say so when it doesn't know
+- **Retrieval-stage evaluation** â€” dense, sparse, hybrid, reranked, and MMR stages are measured independently from generation using Recall, Precision, MRR, nDCG, and latency
+- **Chat + explore + evaluate UI** â€” a Streamlit app for asking questions, browsing the corpus, and viewing quality metrics
+- **One-command deployment** â€” the full stack runs via Docker Compose
 
 ## How it works
 
 ```
 User query
-    │
-    ▼
+    â”‚
+    â–¼
 Query Processor        clean + expand the query (HyDE)
-    │
-    ▼
-Hybrid Retriever        dense (Qdrant) + sparse (BM25) → RRF fusion
-    │
-    ▼
+    â”‚
+    â–¼
+Hybrid Retriever        dense (Qdrant) + sparse (BM25) â†’ RRF fusion
+    â”‚
+    â–¼
 Cross-Encoder Reranker   re-score top candidates for precision
-    │
-    ▼
+    â”‚
+    â–¼
 Context Assembler        build a prompt from the retrieved chunks
-    │
-    ▼
+    â”‚
+    â–¼
 LLM provider adapter    Claude / OpenAI / Ollama, sync or streaming
-    │
-    ▼
+    â”‚
+    â–¼
 Streamlit UI / API       display the answer with source cards
 ```
 
@@ -68,7 +68,7 @@ This part implements a reproducible pipeline using the ArXiv API, PDF parsing, r
 
 **Part 1 summary:** papers can be downloaded, transformed into clean section-labelled text, enriched with metadata and citations, and saved as structured JSON without generative AI dependencies.
 
-### Part 2: Improvement — discovery before ingestion using LLM and MCP - 09/07/2026
+### Part 2: Improvement â€” discovery before ingestion using LLM and MCP - 09/07/2026
 
 This part adds a dedicated discovery stage to improve result relevance, support multiple sources, remove duplicates, and retain a reliable ArXiv fallback.
 
@@ -193,14 +193,15 @@ This part turns ranked `RetrievalResult` chunks into bounded prompts and structu
 | `config/prompts/*.yaml` | Defines strict Jinja templates for cited Q&A, summarization, paper comparison, and HyDE retrieval expansion. |
 | `generation/prompt_manager.py` | Loads and caches YAML prompts, rejects unsafe names and malformed templates, and fails clearly when required variables are missing. |
 | `generation/context_assembler.py` | Converts ranked retrieval results into numbered, whole-chunk context blocks with a configurable token budget and citation map. |
-| `generation/citation_handler.py` | Validates numeric citation markers, reports unknown and unused citations, and builds an ordered source list containing only cited retrieval evidence. |
-| `generation/llm_client.py` | Provides injectable synchronous and asynchronous clients for Claude, OpenAI, and Ollama; streaming exposes plain text deltas and provider failures become `LLMClientError`. |
+| `generation/citation_handler.py` | Validates numeric citation markers against the exact prompt context, hard-rejects provider-native markup without rewriting it, reports unknown/unused citations, and builds an ordered source list. |
+| `generation/llm_client.py` | Provides injectable synchronous and asynchronous clients for Claude, OpenAI, Groq, and Ollama; every completion carries provider finish metadata and token counts when available. |
 | `generation/streaming_handler.py` | Produces incremental text or SSE-ready token/done events while buffering the complete answer for final citation validation. |
-| `generation/response_formatter.py` | Owns the chat response contract: answer, cited sources, latency, citation validity, and unknown citation numbers. |
+| `generation/response_formatter.py` | Owns the chat response contract, including finish reason, validation failures, and whether the original or repaired attempt produced the answer. |
+| `generation/response_validator.py` | Applies deterministic citation, truncation, required-field, table-completeness, and max-item checks, then supports one failure-specific repair attempt. |
 | `generation/cli.py` | Provides an offline-by-default smoke harness, optional evaluator-result loading, streamed event output, and opt-in live provider calls. |
 | Six focused `tests/unit/test_*.py` generation test modules | Exercise prompt errors, context limits, citation failures, all provider branches, streaming interruption, and response formatting without network calls. |
 
-The validated local flow is: `RetrievalResult` → numbered context → rendered prompt → injected LLM response → citation validation → `GeneratedAnswer.to_dict()`. The complete test suite currently passes 94 tests.
+The validated local flow is: `RetrievalResult` â†’ numbered context â†’ rendered prompt â†’ injected LLM response â†’ citation validation â†’ `GeneratedAnswer.to_dict()`. The complete test suite currently passes 123 tests.
 
 Known limitations are explicit: API and frontend integration are not part of this milestone; provider tests use injected clients rather than live services; streaming interruptions propagate without a false completion event; and unknown citations are reported rather than silently removed or rewritten. Source fields unavailable in `RetrievalResult` remain `null` or empty until a richer metadata lookup is connected.
 
@@ -235,4 +236,50 @@ before diversity selection, and can add substantial CPU latency:
 # Opt into a real configured provider.
 .\venv\Scripts\python.exe -m generation.cli --live --provider ollama --model llama3.1 --stream
 ```
-**Part 8 summary:** generation is now a self-contained, provider-neutral layer that produces auditable cited responses from retrieval output. The next integration step is to connect it to `/api/v1/chat`, add request-level orchestration and observability, and evaluate answer correctness and faithfulness separately from retrieval quality.
+#### Generation answer-quality evaluation and runtime gates - 05/08/2026
+
+Generation now uses an independent evaluator rather than importing retrieval-evaluator internals. `evaluation/generation_metrics.py` is separate from the retrieval metrics module because claim grounding, citation coverage, field completeness, truncation, and qualifying-item classification are generation-stage concepts; keeping them separate avoids turning the stage-agnostic ranking module into mixed-purpose code. `evaluation/generation_evaluator.py` exercises the same `run_generation` validation-and-repair path used by the CLI and writes timestamped JSON, CSV, and Markdown breakdowns with latency and an injectable provider-cost estimate. `evaluation/llm_judge.py` judges only semantic support, qualification, limitation attribution, and item distinctness from supplied evidence; deterministic format checks never spend judge calls. Judge failures remain `unjudged`, and verdicts are cached by question, answer model, and response hash.
+
+The first release-quality model comparison has **not** been run. The local candidate file contains 20 frozen-context hard questions, but 0 are marked human-reviewed and no human calibration verdicts have been supplied. The loader deliberately rejects these candidates when `require_reviewed=True`; consequently there are no honest groundedness, precision/recall, latency, or cost numbers to report yet, and none of the proposed quality thresholds is claimed as passing. This is a data-review blocker, not a model result. Exact-label judge/human calibration agreement is fixed at **at least 80%** before judge-based metrics may gate a release.
+
+The deterministic implementation is covered by the full offline suite: **123 tests pass**. These tests prove finish-reason propagation, truncation rejection, citation mapping/format failures, a single repair cap, metric arithmetic, judge outage behavior and caching, and all three artifact formats. They do not establish answer quality because provider calls are mocked. Cost remains `null` unless the evaluator is given a provider-specific cost estimator, preventing an unknown price from being presented as zero.
+
+Suggested release gates remain starting hypotheses: no truncated final answers, 100% valid project citation syntax, at least 95% claim-level citation coverage, no unsupported qualifying items, at least 90% judge-supported claims, and 100% required-field completeness. They should be tuned only after human review and the first real run.
+
+### Run generation evaluation with LM Studio
+
+The project treats LM Studio as a separate local provider while using its OpenAI-compatible API. The default local endpoint is `http://127.0.0.1:1234/v1`; `.env` selects the loaded `google/gemma-4-e4b` model.
+
+1. In LM Studio, open **Developer**, enable **Start server**, and leave the server on port `1234`.
+2. Run one question first to verify the model, prompt, frozen-context lookup, and output writing:
+
+```powershell
+.\venv\Scripts\python.exe -m evaluation.run_generation_eval --limit 1
+```
+
+3. Run all 20 candidate questions:
+
+```powershell
+.\venv\Scripts\python.exe -m evaluation.run_generation_eval
+```
+
+Results are written as timestamped JSON, CSV, and Markdown files under `evaluation/data/eval_results`. By default, the run combines deterministic validation, the evidence-only LLM judge, and reference-free RAGAS faithfulness, answer-relevancy, and context-utilization scores. The RAGAS judge uses `JUDGE_PROVIDER`/`JUDGE_MODEL` and local sentence-transformer embeddings. Use `--no-ragas` for an offline/custom-metrics-only run. Reference-dependent RAGAS metrics are intentionally omitted until reviewed reference answers exist. Add `--require-reviewed` only after the golden questions have been human-reviewed; the current candidates intentionally fail that release gate.
+
+To add or retry RAGAS scoring without paying the generation cost again:
+
+```powershell
+.\venv\Scripts\python.exe -m evaluation.run_ragas_eval evaluation\data\eval_results\generation_eval_<timestamp>.json
+```
+
+RAGAS uses provider-compatible answer relevancy (`strictness=1`, therefore `n=1`) and throttles Groq calls to `RAGAS_REQUESTS_PER_SECOND=0.05` by default. Increase that value only when the judge account has a larger token-per-minute allowance. The re-score path evaluates the exact context chunks seen by generation when the result contains `context_chunk_ids`.
+
+Rebuild and audit the evidence-aligned candidate set after replacing the BM25 artifact:
+
+```powershell
+.\venv\Scripts\python.exe -m evaluation.bootstrap_generation_golden
+.\venv\Scripts\python.exe -m evaluation.bootstrap_generation_golden --audit-only
+```
+
+The bootstrapper guarantees that frozen chunks exist and belong to the declared source paper. It deliberately leaves every record `reviewed=false`; human review and calibration labels are still required before release gating.
+
+**Part 8 summary:** generation is now a self-contained, provider-neutral layer with finish metadata, deterministic runtime validation, one bounded repair attempt, and an independent offline quality evaluator. The immediate next step is human review of the 20 candidate questions plus 5â€“10 calibration cases, followed by the first real cross-model run; until then, release-gate quality remains unmeasured.

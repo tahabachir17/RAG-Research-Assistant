@@ -34,8 +34,38 @@ def test_build_source_list_uses_first_citation_order_and_ignores_unknowns():
     assert sources[0]["primary_category"] is None
 
 
-def test_empty_answer_is_valid_but_all_context_sources_are_unused():
+def test_grouped_citations_are_validated_and_exposed_as_sources():
+    citation_map = {
+        1: _source(1, "p1"),
+        2: _source(2, "p2"),
+        3: _source(3, "p3"),
+    }
+    result = validate_citations("Supported [2, 3]; unknown [8,9].", citation_map)
+    assert result.valid is False
+    assert result.cited_numbers == [2, 3, 8, 9]
+    assert result.unknown_numbers == [8, 9]
+    assert [
+        item["paper_id"] for item in build_source_list("Claim [2, 3].", citation_map)
+    ] == ["p2", "p3"]
+
+
+def test_empty_answer_with_context_is_invalid_and_sources_are_unused():
     result = validate_citations("", {1: _source(1, "p1")})
-    assert result.valid is True
+    assert result.valid is False
     assert result.cited_numbers == []
     assert result.unused_numbers == [1]
+
+
+def test_empty_answer_without_context_is_valid():
+    result = validate_citations("", {})
+    assert result.valid is True
+
+
+def test_nonempty_uncited_answer_with_context_is_invalid():
+    assert validate_citations("An unsupported answer.", {1: _source(1, "p1")}).valid is False
+
+
+def test_provider_native_citation_markup_is_hard_rejected():
+    result = validate_citations("Claim 【2†L1-L8】 and valid [1].", {1: _source(1, "p1")})
+    assert result.valid is False
+    assert result.unsupported_markers == ["【2†L1-L8】"]

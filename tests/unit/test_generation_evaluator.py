@@ -1,0 +1,23 @@
+from __future__ import annotations
+
+from evaluation.generation_evaluator import GenerationEvaluator, save_generation_outputs
+from evaluation.generation_golden import GenerationGoldenQuestion
+from generation.llm_client import LLMCompletion
+from retrieval.models import RetrievalResult
+
+
+class FakeLLM:
+    def complete(self, system, user, stream=False):
+        return LLMCompletion("| pipeline stage | selection mechanism | dataset | benefit | limitations |\n|---|---|---|---|---|\n| retrieval | filter | test set | gain | cost | [1]", "stop")
+
+
+def test_evaluator_uses_runtime_path_and_writes_all_artifacts(tmp_path):
+    question = GenerationGoldenQuestion("q1", "Compare.", ["c1"], ["filter"], {}, ["pipeline_stage", "selection_mechanism", "dataset", "benefit", "limitations"], 3, True, [])
+    chunk = RetrievalResult("c1", "Filtering improved retrieval but added cost.", 1.0, "frozen", paper_id="p1")
+    result = GenerationEvaluator(llm=FakeLLM(), chunk_lookup=lambda ids: [chunk], provider="fake", model="answerer", max_retries=1).evaluate([question])
+    assert result["aggregate"]["citation_validity_rate"] == 1.0
+    assert result["aggregate"]["required_field_completeness"] == 1.0
+    assert result["questions"][0]["context_chunk_ids"] == ["c1"]
+    paths = save_generation_outputs(result, tmp_path)
+    assert set(paths) == {"json", "csv", "markdown"}
+    assert all(path.is_file() for path in paths.values())

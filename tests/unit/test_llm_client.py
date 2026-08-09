@@ -9,9 +9,11 @@ from generation import llm_client as llm_module
 from generation.llm_client import (
     ClaudeClient,
     LLMClientError,
+    LMStudioClient,
     OllamaClient,
     OpenAIClient,
     build_llm_client,
+    coerce_completion,
 )
 
 
@@ -101,6 +103,22 @@ async def test_openai_client_normalizes_sync_async_and_streaming_text():
     assert [text async for text in stream] == ["x", "y"]
 
 
+def test_lmstudio_client_uses_local_openai_compatibility_settings(monkeypatch):
+    created = []
+
+    class FakeOpenAI:
+        def __init__(self, **kwargs):
+            created.append(kwargs)
+
+    fake_module = SimpleNamespace(OpenAI=FakeOpenAI, AsyncOpenAI=FakeOpenAI)
+    monkeypatch.setitem(__import__("sys").modules, "openai", fake_module)
+    client = LMStudioClient(_settings("lmstudio"))
+    assert client.provider == "lmstudio"
+    assert created == [
+        {"api_key": "lm-studio", "base_url": "http://127.0.0.1:1234/v1"},
+        {"api_key": "lm-studio", "base_url": "http://127.0.0.1:1234/v1"},
+    ]
+
 class _OllamaSync:
     def chat(self, **kwargs):
         events = [{"message": {"content": "one"}}, {"message": {"content": "two"}}]
@@ -158,6 +176,7 @@ def test_provider_errors_are_wrapped_with_status_and_factory_rejects_unknown():
     [
         ("claude", "ClaudeClient"),
         ("openai", "OpenAIClient"),
+        ("lmstudio", "LMStudioClient"),
         ("ollama", "OllamaClient"),
     ],
 )
@@ -167,3 +186,34 @@ def test_factory_selects_each_provider_without_live_clients(
     sentinel = object()
     monkeypatch.setattr(llm_module, attribute, lambda settings: sentinel)
     assert build_llm_client(_settings(provider)) is sentinel
+
+@pytest.mark.parametrize(
+    ("provider", "response", "expected"),
+    [
+        ("claude", SimpleNamespace(content=[SimpleNamespace(text="cut")], stop_reason="max_tokens", usage=SimpleNamespace(input_tokens=2, output_tokens=3)), "max_tokens"),
+        ("openai", SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="cut"), finish_reason="length")], usage=SimpleNamespace(prompt_tokens=2, completion_tokens=3)), "length"),
+    ],
+)
+def test_nonstreaming_completion_captures_finish_reason(provider, response, expected):
+    sync = _SyncCreate(response, [])
+    if provider == "claude":
+        client = ClaudeClient(_settings(provider), client=SimpleNamespace(messages=sync), async_client=SimpleNamespace(messages=_AsyncCreate(response, [])))
+    else:
+        client = OpenAIClient(_settings(provider), client=SimpleNamespace(chat=SimpleNamespace(completions=sync)), async_client=SimpleNamespace(chat=SimpleNamespace(completions=_AsyncCreate(response, []))))
+    completion = client.complete("system", "user")
+    assert completion.finish_reason == expected
+    assert completion.output_tokens == 3
+
+
+def test_ollama_completion_captures_done_reason():
+    class Sync:
+        def chat(self, **kwargs):
+            return {"message": {"content": "cut"}, "done_reason": "length", "eval_count": 4}
+    client = OllamaClient(_settings("ollama"), client=Sync(), async_client=_OllamaAsync())
+    completion = client.complete("system", "user")
+    assert completion.finish_reason == "length"
+    assert completion.output_tokens == 4
+
+
+def test_completion_repairs_common_windows_1252_mojibake():
+    assert coerce_completion("San Franciscoâ€™s freeway").text == "San Francisco’s freeway"

@@ -18,6 +18,7 @@ def test_format_response_matches_chat_contract_and_filters_sources():
     answer = "Supported [2], unknown [9]."
     validation = validate_citations(answer, context.citation_map)
     generated = format_response(answer, context, validation, time.monotonic() - 0.01)
+    assert generated.context_chunk_ids == ["c1", "c2"]
 
     payload = generated.to_dict()
     assert payload["answer"] == answer

@@ -21,6 +21,7 @@ nltk==3.8.1                         # Tokenization for BM25
 tiktoken==0.7.0                     # Token counting (OpenAI-compatible)
 langchain==0.2.12                   # RAG orchestration framework
 langchain-community==0.2.11         # LangChain community integrations
+langchain-huggingface==0.0.3        # Non-deprecated Hugging Face embeddings integration
 llama-index==0.10.61                # Alternative RAG framework (optional)
 
 

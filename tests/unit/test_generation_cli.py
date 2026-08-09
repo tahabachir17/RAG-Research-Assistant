@@ -6,10 +6,13 @@ import pytest
 
 from generation.cli import (
     add_retrieved_evidence,
+    build_evidence_queries,
     diversify_ranked_results,
+    fuse_query_results,
     load_ranked_results,
     main,
     retrieve_ranked_results,
+    prioritize_explicit_rag_evidence,
     run_generation,
 )
 from retrieval.models import RetrievalResult
@@ -66,7 +69,10 @@ def test_harness_retrieves_new_question_from_local_index(monkeypatch, tmp_path):
 
     monkeypatch.setattr("generation.cli.SparseRetriever", FakeSparseRetriever)
     results = retrieve_ranked_results(
-        "How does RAG work?", tmp_path / "bm25.pkl", top_k=3
+        "How does RAG work?",
+        tmp_path / "bm25.pkl",
+        top_k=3,
+        expand_evidence_queries=False,
     )
     assert results == [expected]
 
@@ -96,14 +102,64 @@ def test_retrieval_reranks_candidates_before_diversification(monkeypatch, tmp_pa
         top_k=2,
         candidate_k=2,
         reranker=FakeReranker(),
+        expand_evidence_queries=False,
     )
     assert results == [second, first]
+
+
+def test_expanded_retrieval_bounds_candidates_before_reranking(monkeypatch, tmp_path):
+    calls = 0
+
+    class FakeSparseRetriever:
+        def __init__(self, index_path, default_top_k):
+            assert default_top_k == 2
+
+        def search(self, question):
+            nonlocal calls
+            calls += 1
+            return [
+                RetrievalResult(
+                    f"c{calls}-a",
+                    f"first {calls}",
+                    2.0,
+                    "sparse",
+                    paper_id=f"p{calls}-a",
+                ),
+                RetrievalResult(
+                    f"c{calls}-b",
+                    f"second {calls}",
+                    1.0,
+                    "sparse",
+                    paper_id=f"p{calls}-b",
+                ),
+            ]
+
+    class FakeReranker:
+        def rerank(self, question, candidates, top_k):
+            assert len(candidates) == top_k == 2
+            return candidates
+
+    monkeypatch.setattr("generation.cli.SparseRetriever", FakeSparseRetriever)
+    results = retrieve_ranked_results(
+        "Compare retrieval methods in RAG",
+        tmp_path / "bm25.pkl",
+        top_k=2,
+        candidate_k=2,
+        reranker=FakeReranker(),
+    )
+    assert calls == 4
+    assert len(results) == 2
 
 
 def test_diversification_limits_papers_sections_versions_and_exact_chunks():
     candidates = [
         RetrievalResult(
-            "ref", "citation list", 12.0, "sparse", paper_id="paper-r", section="references"
+            "ref",
+            "citation list",
+            12.0,
+            "sparse",
+            paper_id="paper-r",
+            section="references",
         ),
         RetrievalResult(
             "front",
@@ -155,7 +211,7 @@ def test_diversification_limits_papers_sections_versions_and_exact_chunks():
         max_chunks_per_section=1,
     )
 
-    assert [result.chunk_id for result in selected] == ["c1", "c3", "c4", "c5"]
+    assert [result.chunk_id for result in selected] == ["c1", "c4", "c5", "c3"]
 
     diagnostic = diversify_ranked_results(
         candidates[:1],
@@ -163,6 +219,48 @@ def test_diversification_limits_papers_sections_versions_and_exact_chunks():
         excluded_sections=(),
     )
     assert [result.chunk_id for result in diagnostic] == ["ref"]
+
+
+def test_evidence_queries_cover_evaluation_and_limitations():
+    queries = build_evidence_queries(
+        "Compare RAG retrieval methods. Identify three methods and report details."
+    )
+    assert len(queries) == 4
+    assert "dataset benchmark metric" in queries[2]
+    assert "limitations drawbacks" in queries[3]
+
+
+def test_multi_query_fusion_rewards_chunks_found_across_facets():
+    shared = RetrievalResult("shared", "shared", 9.0, "sparse", paper_id="p1")
+    first = RetrievalResult("first", "first", 10.0, "sparse", paper_id="p2")
+    second = RetrievalResult("second", "second", 10.0, "sparse", paper_id="p3")
+    fused = fuse_query_results([[first, shared], [second, shared]])
+    assert fused[0].chunk_id == "shared"
+    assert fused[0].source == "multi_query_sparse"
+
+
+def test_explicit_rag_scope_uses_passage_text_not_paper_title():
+    unrelated = RetrievalResult(
+        "other",
+        "Video-text retrieval results.",
+        2.0,
+        "test",
+        title="A RAG Survey",
+    )
+    rag = RetrievalResult(
+        "rag",
+        "The method was evaluated in retrieval-augmented generation (RAG).",
+        1.0,
+        "test",
+    )
+    strict_question = "Only classify a method if the passage explicitly evaluates it in a RAG setting."
+    assert [
+        item.chunk_id
+        for item in prioritize_explicit_rag_evidence(strict_question, [unrelated, rag])
+    ] == ["rag", "other"]
+    assert prioritize_explicit_rag_evidence(
+        "Compare ordinary retrieval models.", [unrelated, rag]
+    ) == [unrelated, rag]
 
 
 def test_retrieved_evidence_includes_full_cited_chunk():

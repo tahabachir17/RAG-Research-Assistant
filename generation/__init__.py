@@ -13,11 +13,15 @@ try:
         ClaudeClient,
         LLMClient,
         LLMClientError,
+        LLMCompletion,
+        LLMStreamChunk,
+        LMStudioClient,
         OllamaClient,
         OpenAIClient,
         build_llm_client,
     )
     from .prompt_manager import PromptManager, PromptTemplate
+    from .response_validator import ResponseValidator, ValidationResult, ValidatedGeneration, generate_with_validation
     from .response_formatter import GeneratedAnswer, format_response
     from .streaming_handler import stream_answer, stream_answer_events
 except ImportError:
@@ -31,11 +35,15 @@ except ImportError:
         ClaudeClient,
         LLMClient,
         LLMClientError,
+        LLMCompletion,
+        LLMStreamChunk,
+        LMStudioClient,
         OllamaClient,
         OpenAIClient,
         build_llm_client,
     )
     from prompt_manager import PromptManager, PromptTemplate
+    from response_validator import ResponseValidator, ValidationResult, ValidatedGeneration, generate_with_validation
     from response_formatter import GeneratedAnswer, format_response
     from streaming_handler import stream_answer, stream_answer_events
 __all__ = [
@@ -47,13 +55,20 @@ __all__ = [
     "GeneratedAnswer",
     "LLMClient",
     "LLMClientError",
+    "LLMCompletion",
+    "LLMStreamChunk",
+    "LMStudioClient",
     "OllamaClient",
     "OpenAIClient",
     "PromptManager",
     "PromptTemplate",
+    "ResponseValidator",
+    "ValidationResult",
+    "ValidatedGeneration",
     "build_llm_client",
     "build_source_list",
     "format_response",
+    "generate_with_validation",
     "stream_answer",
     "stream_answer_events",
     "validate_citations",

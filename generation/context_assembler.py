@@ -98,7 +98,9 @@ class ContextAssembler:
             if not isinstance(block_tokens, int) or block_tokens < 0:
                 raise ValueError("token_counter must return a non-negative integer")
             if used_tokens + block_tokens > self.max_context_tokens:
-                break
+                # A long high-ranked chunk must not prevent shorter later
+                # evidence from using the remaining context budget.
+                continue
             used_tokens += block_tokens
             blocks.append(block)
             citation_map[citation_number] = CitationSource(

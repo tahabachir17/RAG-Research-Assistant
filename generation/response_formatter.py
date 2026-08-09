@@ -7,10 +7,7 @@ from dataclasses import asdict, dataclass
 from typing import Any
 
 try:
-    from .citation_handler import (
-        CitationValidationResult,
-        build_source_list,
-    )
+    from .citation_handler import CitationValidationResult, build_source_list
     from .context_assembler import AssembledContext
 except ImportError:
     from citation_handler import CitationValidationResult, build_source_list
@@ -24,6 +21,10 @@ class GeneratedAnswer:
     latency_ms: int
     citations_valid: bool
     unknown_citations: list[int]
+    context_chunk_ids: list[str]
+    finish_reason: str | None = None
+    final_attempt: str = "original"
+    validation_failures: list[str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -34,6 +35,10 @@ def format_response(
     assembled_context: AssembledContext,
     validation: CitationValidationResult,
     started_at: float,
+    *,
+    finish_reason: str | None = None,
+    final_attempt: str = "original",
+    validation_failures: list[str] | None = None,
 ) -> GeneratedAnswer:
     if not isinstance(answer, str):
         raise TypeError("answer must be a string")
@@ -50,4 +55,11 @@ def format_response(
         latency_ms=latency_ms,
         citations_valid=validation.valid,
         unknown_citations=list(validation.unknown_numbers),
+        context_chunk_ids=[
+            source.chunk_id
+            for _, source in sorted(assembled_context.citation_map.items())
+        ],
+        finish_reason=finish_reason,
+        final_attempt=final_attempt,
+        validation_failures=list(validation_failures or []),
     )

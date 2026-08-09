@@ -17,10 +17,18 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "llama-3.3-70b-versatile"
     LLM_MAX_TOKENS: int = Field(default=1024, gt=0)
     LLM_TEMPERATURE: float = Field(default=0.0, ge=0.0, le=2.0)
+    GENERATION_MAX_RETRIES: int = Field(default=1, ge=0, le=1)
+    JUDGE_PROVIDER: str = "groq"
+    JUDGE_MODEL: str = "llama-3.3-70b-versatile"
+    JUDGE_MAX_TOKENS: int = Field(default=1024, gt=0)
+    JUDGE_TEMPERATURE: float = Field(default=0.0, ge=0.0, le=2.0)
+    RAGAS_REQUESTS_PER_SECOND: float = Field(default=0.05, gt=0.0, le=10.0)
     ANTHROPIC_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
     OPENAI_API_KEY: str | None = None
     OPENAI_BASE_URL: str | None = None
+    LMSTUDIO_API_KEY: str = "lm-studio"
+    LMSTUDIO_BASE_URL: str = "http://127.0.0.1:1234/v1"
     OLLAMA_HOST: str | None = None
 
     EMBEDDING_MODEL: str = "all-MiniLM-L6-v2"

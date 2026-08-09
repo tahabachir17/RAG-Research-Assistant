@@ -44,6 +44,17 @@ def test_context_assembler_enforces_budget_without_cutting_chunks():
     assert "second" not in assembled.context_block
 
 
+def test_context_assembler_skips_oversized_chunk_and_keeps_later_evidence():
+    def counter(text):
+        return 20 if "oversized" in text else 4
+
+    assembled = ContextAssembler(max_context_tokens=5, token_counter=counter).assemble(
+        [_result("c1", "oversized"), _result("c2", "short evidence")]
+    )
+    assert [source.chunk_id for source in assembled.citation_map.values()] == ["c2"]
+    assert "short evidence" in assembled.context_block
+
+
 def test_context_assembler_empty_input_and_optional_section_deduplication():
     assembler = ContextAssembler(dedupe_paper_sections=True)
     assert assembler.assemble([]).context_block == ""
