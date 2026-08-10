@@ -86,6 +86,36 @@ def test_ragas_prefers_the_exact_context_seen_by_generation():
     assert records[0]["contexts"] == ["Seen"]
 
 
+def test_ragas_projects_structured_table_to_factual_narrative():
+    generation = {
+        "questions": [
+            {
+                "id": "q1",
+                "question": "Question?",
+                "answer": "| method | limitations |\n| --- | --- |",
+                "structured_data": {
+                    "items": [
+                        {
+                            "method": {"text": "Scales adapter outputs", "citations": [1]},
+                            "limitations": {
+                                "text": "Not reported in the supplied passages.",
+                                "citations": [],
+                            },
+                        }
+                    ]
+                },
+            }
+        ]
+    }
+    records = build_ragas_records(
+        generation,
+        context_lookup=lambda ids: [RetrievalResult("c1", "Seen", 1.0, "frozen")],
+        chunk_ids_by_question={"q1": ["c1"]},
+    )
+
+    assert records[0]["answer"] == "Contribution 1. Method: Scales adapter outputs."
+
+
 def test_ragas_qwen_uses_local_lmstudio_endpoint():
     settings = Settings(
         _env_file=None,

@@ -189,6 +189,7 @@ def run_generation(
         validation_failures=outcome.validation.failures,
         provider=getattr(generator, "last_provider", None)
         or getattr(generator, "provider", "offline"),
+        structured_data=outcome.structured_data,
     )
 
 

@@ -64,6 +64,27 @@ def test_long_section_is_overlapping_and_deterministic():
     assert all(len(chunk.text.split()) <= 10 for chunk in first)
 
 
+def test_short_natural_windows_advance_past_the_boundary():
+    text = " ".join(
+        [
+            "one two three four five.",
+            "six seven eight nine ten.",
+            "eleven twelve thirteen fourteen fifteen.",
+        ]
+    )
+    chunks = SectionAwareChunker(
+        max_tokens=10,
+        overlap_tokens=8,
+        min_tokens=2,
+        tokenizer=WordTokenizer(),
+    ).chunk({"paper_id": "paper", "sections": {"method": text}})
+
+    assert [chunk.text for chunk in chunks] == [
+        "one two three four five.",
+        "six seven eight nine ten. eleven twelve thirteen fourteen fifteen.",
+    ]
+
+
 def test_falls_back_to_raw_pages_when_sections_are_empty():
     document = {
         "paper_id": "paper",
@@ -124,3 +145,17 @@ def test_configuration_rejects_invalid_values():
 
     with pytest.raises(ValueError):
         SectionAwareChunker(min_tokens=0)
+
+
+def test_missing_tiktoken_encoding_uses_offline_tokenizer(monkeypatch):
+    import processing.chunker as chunker_module
+
+    def unavailable(_encoding_name):
+        raise OSError("encoding cache unavailable")
+
+    monkeypatch.setattr(chunker_module, "_TiktokenTokenizer", unavailable)
+    chunks = SectionAwareChunker().chunk(
+        {"paper_id": "paper", "sections": {"method": "Offline text works."}}
+    )
+
+    assert [chunk.text for chunk in chunks] == ["Offline text works."]

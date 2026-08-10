@@ -25,8 +25,9 @@ class FakeJsonClient(FakeClient):
 def test_judge_parses_and_caches_structured_verdicts(tmp_path):
     fake = FakeClient('{"verdicts":[{"subject_id":"c1","check":"claim_support","verdict":"supported","rationale":"passage says so"}]}')
     judge = LLMJudge(fake, judge_model="judge", model_under_test="answerer", cache_path=tmp_path / "judge.json")
-    first = judge.judge(question_id="q1", question="q", answer="a", evidence=[], subjects=[])
-    second = judge.judge(question_id="q1", question="q", answer="a", evidence=[], subjects=[])
+    subjects = [{"subject_id": "c1", "check": "claim_support"}]
+    first = judge.judge(question_id="q1", question="q", answer="a", evidence=[], subjects=subjects)
+    second = judge.judge(question_id="q1", question="q", answer="a", evidence=[], subjects=subjects)
     assert first.judge_status == "judged"
     assert second.cached is True
     assert fake.calls == 1
@@ -78,8 +79,33 @@ def test_judge_uses_native_json_mode_and_repairs_once():
         question="question",
         answer="answer",
         evidence=[],
-        subjects=[],
+        subjects=[{"subject_id": "c1", "check": "claim_support"}],
     )
     assert result.judge_status == "judged"
     assert fake.json_calls == 2
     assert fake.calls == 0
+
+
+def test_judge_rejects_incomplete_subject_coverage():
+    fake = FakeJsonClient(
+        [
+            '{"verdicts":[{"subject_id":"c1","check":"claim_support","verdict":"supported","rationale":"ok"}]}',
+            '{"verdicts":[{"subject_id":"c1","check":"claim_support","verdict":"supported","rationale":"ok"}]}',
+        ]
+    )
+    result = LLMJudge(
+        fake,
+        judge_model="judge",
+        model_under_test="answerer",
+    ).judge(
+        question_id="q",
+        question="question",
+        answer="answer",
+        evidence=[],
+        subjects=[
+            {"subject_id": "c1", "check": "claim_support"},
+            {"subject_id": "c2", "check": "claim_support"},
+        ],
+    )
+    assert result.judge_status == "unjudged"
+    assert "coverage mismatch" in (result.error or "")

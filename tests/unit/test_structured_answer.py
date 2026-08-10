@@ -26,6 +26,9 @@ def test_structured_answer_instruction_bounds_local_model_output():
     instruction = structured_answer_instruction(["method", "limitations"], 2)
     assert "summary must be an empty string" in instruction
     assert "at most 18 words" in instruction
+    assert "one central contribution" in instruction
+    assert "Do not combine evidence about different methods" in instruction
+    assert "Do not split one method or contribution" in instruction
 
 
 def test_structured_answer_rejects_uncited_factual_cell():
@@ -38,6 +41,22 @@ def test_structured_answer_rejects_uncited_factual_cell():
         )
 
 
+def test_structured_answer_rejects_nonempty_answered_summary_and_verbose_cell():
+    verbose = " ".join(f"word{index}" for index in range(19))
+    raw = (
+        '{"answer_status":"answered","summary":"unrequested summary","items":['
+        f'{{"method":{{"text":"{verbose}","citations":[1]}}}}]}}'
+    )
+    with pytest.raises(StructuredAnswerError) as caught:
+        parse_and_render_structured_answer(
+            raw,
+            required_fields=["method"],
+            valid_citations={1},
+        )
+    assert "structured_answer_summary_not_empty" in caught.value.failures
+    assert "structured_field_too_long:1:method" in caught.value.failures
+
+
 def test_structured_answer_allows_explicit_uncited_abstention():
     raw = '{"answer_status":"insufficient_evidence","summary":"The supplied passages do not support a qualifying method.","items":[]}'
     rendered, structured = parse_and_render_structured_answer(
@@ -47,6 +66,26 @@ def test_structured_answer_allows_explicit_uncited_abstention():
     )
     assert rendered.startswith("The supplied passages")
     assert structured["answer_status"] == "insufficient_evidence"
+
+
+def test_structured_answer_rejects_row_with_only_absent_values():
+    raw = '{"items":[{"method":{"text":"Not reported in the supplied passages.","citations":[]},"limitations":{"text":"Not reported in the supplied passages.","citations":[]}}]}'
+    with pytest.raises(StructuredAnswerError, match="structured_item_empty:1"):
+        parse_and_render_structured_answer(
+            raw,
+            required_fields=["method", "limitations"],
+            valid_citations={1},
+        )
+
+
+def test_structured_answer_rejects_near_duplicate_rows():
+    raw = '{"items":[{"method":{"text":"Scales adapter outputs with learned parameters","citations":[1]}},{"method":{"text":"Scales adapter outputs using learned parameters","citations":[1]}}]}'
+    with pytest.raises(StructuredAnswerError, match="structured_items_duplicate:1:2"):
+        parse_and_render_structured_answer(
+            raw,
+            required_fields=["method"],
+            valid_citations={1},
+        )
 
 
 def test_structured_narrative_renders_atomic_claim_citations():

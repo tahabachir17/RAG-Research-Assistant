@@ -26,6 +26,7 @@ class GeneratedAnswer:
     final_attempt: str = "original"
     validation_failures: list[str] | None = None
     provider: str | None = None
+    structured_data: Any | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -41,6 +42,7 @@ def format_response(
     final_attempt: str = "original",
     validation_failures: list[str] | None = None,
     provider: str | None = None,
+    structured_data: Any | None = None,
 ) -> GeneratedAnswer:
     if not isinstance(answer, str):
         raise TypeError("answer must be a string")
@@ -65,4 +67,5 @@ def format_response(
         final_attempt=final_attempt,
         validation_failures=list(validation_failures or []),
         provider=provider,
+        structured_data=structured_data,
     )

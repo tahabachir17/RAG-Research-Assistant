@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from evaluation.generation_evaluator import GenerationEvaluator, save_generation_outputs
+from evaluation.generation_evaluator import (
+    GenerationEvaluator,
+    _claims,
+    save_generation_outputs,
+)
 from evaluation.generation_golden import GenerationGoldenQuestion
 from generation.llm_client import LLMCompletion
 from retrieval.models import RetrievalResult
@@ -50,3 +54,40 @@ def test_save_outputs_reuses_explicit_checkpoint_stamp(tmp_path):
     second = save_generation_outputs(result, tmp_path, stamp="checkpoint")
     assert first == second
     assert '"ragas"' in first["json"].read_text(encoding="utf-8")
+
+
+def test_structured_table_cells_become_atomic_claims_without_header_or_abstentions():
+    structured = {
+        "answer_status": "answered",
+        "summary": "",
+        "items": [
+            {
+                "method": {"text": "ScaLearn scales adapter outputs.", "citations": [1]},
+                "evaluation": {
+                    "text": "Evaluated on GLUE and SuperGLUE.",
+                    "citations": [1, 2],
+                },
+                "limitations": {
+                    "text": "Not reported in the supplied passages.",
+                    "citations": [],
+                },
+            }
+        ],
+    }
+    claims = _claims("| method | evaluation | limitations |", structured)
+    assert claims == [
+        {
+            "subject_id": "claim-1:method",
+            "field": "method",
+            "text": "ScaLearn scales adapter outputs.",
+            "citations": [1],
+            "cited": True,
+        },
+        {
+            "subject_id": "claim-1:evaluation",
+            "field": "evaluation",
+            "text": "Evaluated on GLUE and SuperGLUE.",
+            "citations": [1, 2],
+            "cited": True,
+        },
+    ]

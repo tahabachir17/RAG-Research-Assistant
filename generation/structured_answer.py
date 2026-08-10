@@ -6,7 +6,10 @@ import json
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from difflib import SequenceMatcher
 from typing import Any
+
+MAX_STRUCTURED_CELL_WORDS = 18
 
 
 @dataclass(slots=True)
@@ -61,6 +64,8 @@ def parse_and_render_structured_narrative(
         raw_claims = []
     if status == "answered" and not raw_claims:
         failures.append("structured_answer_empty")
+    if status == "answered" and summary:
+        failures.append("structured_answer_summary_not_empty")
     if len(raw_claims) > max_claims:
         failures.append("too_many_claims")
     if status == "insufficient_evidence" and raw_claims:
@@ -118,7 +123,18 @@ def structured_answer_instruction(required_fields: Sequence[str], max_items: int
         "be answered or insufficient_evidence. Use insufficient_evidence only when no "
         "requested item is supported, then return an empty items array and a concise summary. "
         "For answered responses, summary must be an empty string. Keep every factual "
-        "text value to at most 18 words. "
+        "text value to at most 18 words and make it a self-contained claim, not a vague label. "
+        "Each item must describe one central contribution of the paper named in the question. "
+        "The item limit is a ceiling, not a target; return fewer items when the passages do "
+        "not support more distinct contributions. "
+        "Do not split one method or contribution into multiple rows. Every row must have a "
+        "different problem-method pair and a non-overlapping principal finding. Omit a row "
+        "when every requested field would be Not reported. "
+        "Do not present a baseline, related method, dataset, or generic research topic as a "
+        "separate contribution. Before writing a factual value, verify that its cited passages "
+        "explicitly support that value for the same method or contribution. Do not combine "
+        "evidence about different methods. If support is absent or ambiguous, use exactly "
+        '"Not reported in the supplied passages." with an empty citations array. '
         f'The "items" array may contain{limit} items. '
         "Every item must contain exactly the requested fields. Every factual value "
         "must be an object with text and citations. citations must contain only the "
@@ -150,6 +166,8 @@ def parse_and_render_structured_answer(
         failures.append("structured_answer_status_invalid")
     if status == "answered" and not items:
         failures.append("structured_answer_empty")
+    if status == "answered" and summary:
+        failures.append("structured_answer_summary_not_empty")
     if status == "insufficient_evidence" and items:
         failures.append("structured_abstention_has_items")
     if status == "insufficient_evidence" and not summary:
@@ -163,6 +181,7 @@ def parse_and_render_structured_answer(
             failures.append(f"structured_item_invalid:{row_index}")
             continue
         row: dict[str, Any] = {}
+        factual_values = 0
         for field in fields:
             cell = raw_row.get(field)
             if not isinstance(cell, Mapping):
@@ -172,6 +191,8 @@ def parse_and_render_structured_answer(
             raw_citations = cell.get("citations", [])
             if not cell_text:
                 failures.append(f"structured_field_empty:{row_index}:{field}")
+            if len(re.findall(r"\b[\w'-]+\b", cell_text)) > MAX_STRUCTURED_CELL_WORDS:
+                failures.append(f"structured_field_too_long:{row_index}:{field}")
             if not isinstance(raw_citations, list) or any(
                 not isinstance(value, int) or isinstance(value, bool) for value in raw_citations
             ):
@@ -183,8 +204,18 @@ def parse_and_render_structured_answer(
                 failures.append(f"structured_citation_out_of_range:{row_index}:{field}")
             if cell_text and not _is_absent(cell_text) and not citations:
                 failures.append(f"structured_field_uncited:{row_index}:{field}")
+            if cell_text and not _is_absent(cell_text):
+                factual_values += 1
             row[field] = {"text": cell_text, "citations": citations}
+        if factual_values == 0:
+            failures.append(f"structured_item_empty:{row_index}")
         normalized_rows.append(row)
+    for left_index, left in enumerate(normalized_rows):
+        for right_index in range(left_index + 1, len(normalized_rows)):
+            if _rows_are_near_duplicates(left, normalized_rows[right_index], fields):
+                failures.append(
+                    f"structured_items_duplicate:{left_index + 1}:{right_index + 1}"
+                )
     if failures:
         raise StructuredAnswerError(list(dict.fromkeys(failures)))
     structured = {
@@ -225,3 +256,28 @@ def _strip_fence(text: str) -> str:
 def _is_absent(text: str) -> bool:
     normalized = " ".join(text.casefold().split())
     return normalized.startswith("not reported") or normalized.startswith("not provided")
+
+
+def _rows_are_near_duplicates(
+    left: Mapping[str, Any], right: Mapping[str, Any], fields: Sequence[str]
+) -> bool:
+    """Catch repeated rows without pretending to perform semantic similarity."""
+
+    def signature(row: Mapping[str, Any]) -> str:
+        values: list[str] = []
+        for field in fields:
+            cell = row.get(field)
+            if not isinstance(cell, Mapping):
+                continue
+            value = str(cell.get("text", "")).strip()
+            if value and not _is_absent(value):
+                values.append(" ".join(re.findall(r"\w+", value.casefold())))
+        return " ".join(values)
+
+    left_text = signature(left)
+    right_text = signature(right)
+    if not left_text or not right_text:
+        return False
+    if left_text == right_text:
+        return True
+    return SequenceMatcher(None, left_text, right_text).ratio() >= 0.88

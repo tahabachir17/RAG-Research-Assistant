@@ -39,7 +39,7 @@ class JudgeResult:
 class LLMJudge:
     """Judge only semantic checks using supplied evidence and no outside knowledge."""
 
-    def __init__(self, client: LLMClient, *, judge_model: str, model_under_test: str, judge_provider: str | None = None, cache_path: str | Path | None = None, temperature: float = 0.0, rubric_version: str = "evidence-v1") -> None:
+    def __init__(self, client: LLMClient, *, judge_model: str, model_under_test: str, judge_provider: str | None = None, cache_path: str | Path | None = None, temperature: float = 0.0, rubric_version: str = "atomic-evidence-v2") -> None:
         if not judge_model.strip() or judge_model.strip() == model_under_test.strip():
             raise ValueError("judge model must be non-empty and differ from model under test")
         if temperature != 0.0:
@@ -73,7 +73,11 @@ class LLMJudge:
             "claim support by cited evidence, item qualification, limitation attribution, "
             "or whether named items are distinct. Return strict JSON with a 'verdicts' array. "
             "Each verdict must contain subject_id, check, verdict (supported, "
-            "partially_supported, or unsupported), and rationale."
+            "partially_supported, or unsupported), and a rationale of at most 12 words. "
+            "For claim_support, use only top-level evidence entries whose citation_number "
+            "appears in that subject's citations; do not use an uncited passage or transfer "
+            "support between different methods, rows, or fields. "
+            "Return exactly one verdict for every supplied subject_id and no others."
         )
         user = json.dumps(
             {
@@ -87,7 +91,11 @@ class LLMJudge:
             ensure_ascii=False,
         )
         try:
-            verdicts = self._request_verdicts(system, user)
+            verdicts = self._request_verdicts(
+                system,
+                user,
+                {str(subject["subject_id"]) for subject in subjects},
+            )
             result = JudgeResult("judged", verdicts)
         except Exception as exc:
             result = JudgeResult("unjudged", [], f"{type(exc).__name__}: {exc}")
@@ -95,7 +103,12 @@ class LLMJudge:
         self._save_cache()
         return result
 
-    def _request_verdicts(self, system: str, user: str) -> list[JudgeVerdict]:
+    def _request_verdicts(
+        self,
+        system: str,
+        user: str,
+        expected_subject_ids: set[str],
+    ) -> list[JudgeVerdict]:
         """Use native JSON mode and allow one format-only correction."""
 
         prompt = user
@@ -110,7 +123,7 @@ class LLMJudge:
                 )
                 completion = coerce_completion(raw)
                 payload = json.loads(_strip_fence(completion.text))
-                return _parse_verdicts(payload)
+                return _parse_verdicts(payload, expected_subject_ids)
             except Exception as exc:
                 last_error = exc
                 if attempt == 0:
@@ -164,7 +177,10 @@ class LLMJudge:
         self.cache_path.write_text(json.dumps(self._cache, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
-def _parse_verdicts(payload: Any) -> list[JudgeVerdict]:
+def _parse_verdicts(
+    payload: Any,
+    expected_subject_ids: set[str] | None = None,
+) -> list[JudgeVerdict]:
     records = payload.get("verdicts") if isinstance(payload, dict) else None
     if not isinstance(records, list):
         raise ValueError("judge JSON must contain a verdicts array")
@@ -177,6 +193,15 @@ def _parse_verdicts(payload: Any) -> list[JudgeVerdict]:
         if label not in _ALLOWED or not subject_id:
             raise ValueError("judge returned an invalid label or blank subject_id")
         verdicts.append(JudgeVerdict(subject_id, label, str(record.get("rationale", "")), str(record.get("check", "claim_support"))))
+    returned_ids = [verdict.subject_id for verdict in verdicts]
+    if len(returned_ids) != len(set(returned_ids)):
+        raise ValueError("judge returned duplicate subject_id values")
+    if expected_subject_ids is not None and set(returned_ids) != expected_subject_ids:
+        missing = sorted(expected_subject_ids - set(returned_ids))
+        unexpected = sorted(set(returned_ids) - expected_subject_ids)
+        raise ValueError(
+            f"judge verdict coverage mismatch: missing={missing}, unexpected={unexpected}"
+        )
     return verdicts
 
 

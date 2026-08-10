@@ -151,12 +151,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     result = evaluator.evaluate(questions)
     result["provenance"] = {
-        "evaluation_schema_version": 2,
+        "evaluation_schema_version": 3,
         "golden_path": str(args.golden),
         "golden_sha256": _sha256(args.golden),
         "bm25_index_path": str(args.bm25_index),
         "prompt_path": "config/prompts/qa_prompt.yaml",
         "prompt_sha256": _sha256(Path("config/prompts/qa_prompt.yaml")),
+        "structured_contract_path": "generation/structured_answer.py",
+        "structured_contract_sha256": _sha256(
+            Path("generation/structured_answer.py")
+        ),
         "max_context_tokens": args.max_context_tokens,
         "max_output_tokens": settings.LLM_MAX_TOKENS,
     }

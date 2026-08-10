@@ -87,7 +87,9 @@ class SectionAwareChunker:
         else:
             try:
                 self.tokenizer = _TiktokenTokenizer(encoding_name)
-            except (ImportError, KeyError):
+            # tiktoken may be installed while its encoding data is not cached.
+            # Indexing must remain offline-capable in that situation.
+            except (ImportError, KeyError, OSError):
                 self.tokenizer = _RegexTokenizer()
 
     def chunk(self, document: object) -> list[Chunk]:
@@ -155,7 +157,15 @@ class SectionAwareChunker:
                 result.append((start_char, end_char))
             if limit_token >= len(spans):
                 break
-            next_token = max(start_token + 1, limit_token - self.overlap_tokens)
+            window_tokens = limit_token - start_token
+            # A natural boundary can shorten a window below the configured
+            # overlap. In that case, overlapping would make no forward progress
+            # and previously produced one-token-shifted near-duplicate chunks.
+            next_token = (
+                limit_token
+                if window_tokens <= self.overlap_tokens
+                else limit_token - self.overlap_tokens
+            )
             start_token = next_token
         return result
 

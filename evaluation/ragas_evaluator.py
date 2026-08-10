@@ -35,11 +35,56 @@ def build_ragas_records(
             {
                 "id": question_id,
                 "question": str(row["question"]),
-                "answer": str(row["answer"]),
+                "answer": _ragas_answer(row),
                 "contexts": contexts,
             }
         )
     return records
+
+
+def _ragas_answer(row: dict[str, Any]) -> str:
+    """Project structured output into prose that RAGAS can segment reliably."""
+
+    structured = row.get("structured_data")
+    if not isinstance(structured, dict):
+        return str(row["answer"])
+    claims = structured.get("claims")
+    if isinstance(claims, list):
+        values = [
+            str(claim.get("text", "")).strip()
+            for claim in claims
+            if isinstance(claim, dict) and str(claim.get("text", "")).strip()
+        ]
+        if values:
+            return " ".join(_as_sentence(value) for value in values)
+    items = structured.get("items")
+    if not isinstance(items, list):
+        return str(row["answer"])
+    paragraphs: list[str] = []
+    for index, item in enumerate(items, start=1):
+        if not isinstance(item, dict):
+            continue
+        facts: list[str] = []
+        for field, cell in item.items():
+            if not isinstance(cell, dict):
+                continue
+            value = str(cell.get("text", "")).strip()
+            if not value or _is_absent_value(value):
+                continue
+            label = str(field).replace("_", " ").strip().capitalize()
+            facts.append(f"{label}: {value.rstrip('.')}.")
+        if facts:
+            paragraphs.append(f"Contribution {index}. " + " ".join(facts))
+    return "\n\n".join(paragraphs) or str(row["answer"])
+
+
+def _as_sentence(value: str) -> str:
+    return value if value.endswith((".", "!", "?")) else f"{value}."
+
+
+def _is_absent_value(value: str) -> bool:
+    normalized = " ".join(value.casefold().split())
+    return normalized.startswith("not reported") or normalized.startswith("not provided")
 
 
 def evaluate_with_ragas(

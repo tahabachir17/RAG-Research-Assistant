@@ -6,6 +6,7 @@ import csv
 import json
 import re
 import statistics
+from collections.abc import Mapping, Sequence
 from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -106,14 +107,23 @@ class GenerationEvaluator:
             max_retries=self.max_retries,
             max_context_tokens=self.max_context_tokens,
         )
-        claims = _claims(generated.answer)
+        claims = _claims(generated.answer, generated.structured_data)
         missing = {failure.split(":", 1)[1] for failure in generated.validation_failures or [] if failure.startswith("missing_required_field:")}
         present_fields = [field for field in question.required_fields if field not in missing]
         candidates = list(dict.fromkeys(question.expected_qualifying_items + list(question.excluded_items)))
         predicted = [item for item in candidates if re.search(rf"\b{re.escape(item)}\b", generated.answer, re.IGNORECASE)]
-        subjects = [{"subject_id": f"claim-{index}", "check": "claim_support", "text": claim["text"], "citations": claim["citations"]} for index, claim in enumerate(claims, 1)]
-        subjects.extend({"subject_id": f"item-{index}", "check": "item_qualification", "text": item} for index, item in enumerate(predicted, 1))
         evidence = [{"citation_number": index, "chunk_id": chunk.chunk_id, "text": chunk.text} for index, chunk in enumerate(chunks, 1)]
+        subjects = [
+            {
+                "subject_id": claim.get("subject_id", f"claim-{index}"),
+                "check": "claim_support",
+                "text": claim["text"],
+                "citations": claim["citations"],
+                "field": claim.get("field"),
+            }
+            for index, claim in enumerate(claims, 1)
+        ]
+        subjects.extend({"subject_id": f"item-{index}", "check": "item_qualification", "text": item} for index, item in enumerate(predicted, 1))
         judged = self.judge.judge(question_id=question.id, question=question.question, answer=generated.answer, evidence=evidence, subjects=subjects, exclusion_criteria=question.excluded_items) if self.judge else None
         item_by_subject = {f"item-{index}": item for index, item in enumerate(predicted, 1)}
         judged_items = [item_by_subject[verdict.subject_id] for verdict in judged.verdicts if verdict.check == "item_qualification" and verdict.verdict in {"supported", "partially_supported"} and verdict.subject_id in item_by_subject] if judged and judged.judge_status == "judged" else None
@@ -131,6 +141,7 @@ class GenerationEvaluator:
             "question": question.question,
             "reviewed": question.reviewed,
             "answer": generated.answer,
+            "structured_data": generated.structured_data,
             "sources": generated.sources,
             "context_chunk_ids": generated.context_chunk_ids,
             "finish_reason": generated.finish_reason,
@@ -173,15 +184,68 @@ def save_generation_outputs(
     return {"json": json_path, "csv": csv_path, "markdown": markdown_path}
 
 
-def _claims(answer: str) -> list[dict[str, Any]]:
-    claims = []
+def _claims(answer: str, structured_data: Any | None = None) -> list[dict[str, Any]]:
+    structured_claims = _structured_claims(structured_data)
+    if structured_claims is not None:
+        return structured_claims
+    claims: list[dict[str, Any]] = []
     for text in re.split(r"(?<=[.!?])\s+|\n+", answer):
         normalized = text.strip()
-        if not normalized or normalized.startswith("|") and set(normalized) <= {"|", "-", ":", " "}:
+        if not normalized:
             continue
         citations = [int(value) for value in re.findall(r"\[(\d+)\]", normalized)]
+        # Legacy table outputs have no structured payload. Ignore headers and
+        # separators, but retain cited data rows as coarse fallback claims.
+        if normalized.startswith("|") and not citations:
+            continue
         claims.append({"text": normalized, "citations": citations, "cited": bool(citations)})
     return claims
+
+
+def _structured_claims(structured_data: Any | None) -> list[dict[str, Any]] | None:
+    if not isinstance(structured_data, Mapping):
+        return None
+    raw_claims = structured_data.get("claims")
+    if isinstance(raw_claims, Sequence) and not isinstance(raw_claims, (str, bytes)):
+        return [
+            {
+                "subject_id": f"claim-{index}",
+                "text": str(claim.get("text", "")).strip(),
+                "citations": list(claim.get("citations", [])),
+                "cited": bool(claim.get("citations")),
+            }
+            for index, claim in enumerate(raw_claims, 1)
+            if isinstance(claim, Mapping) and str(claim.get("text", "")).strip()
+        ]
+    raw_items = structured_data.get("items")
+    if not isinstance(raw_items, Sequence) or isinstance(raw_items, (str, bytes)):
+        return None
+    claims: list[dict[str, Any]] = []
+    for item_index, item in enumerate(raw_items, 1):
+        if not isinstance(item, Mapping):
+            continue
+        for field, cell in item.items():
+            if not isinstance(cell, Mapping):
+                continue
+            text = str(cell.get("text", "")).strip()
+            if not text or _is_absent_value(text):
+                continue
+            citations = list(cell.get("citations", []))
+            claims.append(
+                {
+                    "subject_id": f"claim-{item_index}:{field}",
+                    "field": str(field),
+                    "text": text,
+                    "citations": citations,
+                    "cited": bool(citations),
+                }
+            )
+    return claims
+
+
+def _is_absent_value(text: str) -> bool:
+    normalized = " ".join(text.casefold().split())
+    return normalized.startswith("not reported") or normalized.startswith("not provided")
 
 
 def _mean(values: Any) -> float:
