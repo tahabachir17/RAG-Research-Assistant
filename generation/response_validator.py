@@ -45,6 +45,7 @@ class ValidatedGeneration:
     final_attempt: str
     validation: ValidationResult
     attempts: list[GenerationAttempt]
+    structured_data: Any | None = None
 
     @property
     def retry_count(self) -> int:
@@ -90,16 +91,21 @@ class ResponseValidator:
         if _is_truncated(finish_reason):
             failures.append("truncated")
         citations = validate_citations(answer, self.citation_map)
-        if self.citation_map and not citations.cited_numbers:
+        is_abstention = (
+            isinstance(structured_data, Mapping)
+            and structured_data.get("answer_status") == "insufficient_evidence"
+        )
+        if self.citation_map and not citations.cited_numbers and not is_abstention:
             failures.append("missing_citation")
         if citations.unknown_numbers:
             failures.append("citation_out_of_range")
         if citations.unsupported_markers:
             failures.append("unsupported_citation_format")
         fields, incomplete_table = _present_fields(answer, structured_data)
-        for field in self.required_fields:
-            if _normalize_field(field) not in fields:
-                failures.append(f"missing_required_field:{field}")
+        if not is_abstention:
+            for field in self.required_fields:
+                if _normalize_field(field) not in fields:
+                    failures.append(f"missing_required_field:{field}")
         if incomplete_table:
             failures.append("incomplete_table")
         count = item_count if item_count is not None else self.item_counter(answer, structured_data)
@@ -116,6 +122,7 @@ def generate_with_validation(
     *,
     max_retries: int = 1,
     logger: Any | None = None,
+    response_parser: Callable[[str], tuple[str, Any]] | None = None,
 ) -> ValidatedGeneration:
     """Call the production LLM path, repairing invalid output at most once."""
 
@@ -125,8 +132,32 @@ def generate_with_validation(
     prompt = user
     for index in range(max_retries + 1):
         started = time.perf_counter()
-        completion = coerce_completion(client.complete(system, prompt))
-        validation = validator.validate(completion.text, finish_reason=completion.finish_reason)
+        json_method = getattr(client, "complete_json", None)
+        raw_completion = (
+            json_method(system, prompt)
+            if response_parser is not None and callable(json_method)
+            else client.complete(system, prompt)
+        )
+        completion = coerce_completion(raw_completion)
+        answer, structured_data = completion.text, None
+        parser_failures: list[str] = []
+        if response_parser is not None:
+            try:
+                answer, structured_data = response_parser(completion.text)
+            except Exception as exc:
+                parser_failures = list(
+                    getattr(exc, "failures", None) or ["structured_output_invalid"]
+                )
+        validation = validator.validate(
+            answer,
+            finish_reason=completion.finish_reason,
+            structured_data=structured_data,
+        )
+        if parser_failures:
+            validation = ValidationResult(
+                False,
+                list(dict.fromkeys([*parser_failures, *validation.failures])),
+            )
         attempt = GenerationAttempt(
             "original" if index == 0 else "repaired",
             completion,
@@ -137,7 +168,14 @@ def generate_with_validation(
         if logger is not None:
             logger.info("generation_validation", extra={"attempt": attempt.attempt, "failures": validation.failures})
         if validation.valid or index == max_retries:
-            return ValidatedGeneration(completion.text, completion.finish_reason, attempt.attempt, validation, attempts)
+            return ValidatedGeneration(
+                answer,
+                completion.finish_reason,
+                attempt.attempt,
+                validation,
+                attempts,
+                structured_data,
+            )
         prompt = _repair_prompt(user, completion.text, validation.failures)
     raise AssertionError("bounded generation loop did not return")
 
@@ -164,6 +202,13 @@ def _present_fields(answer: str, structured_data: Any | None) -> tuple[set[str],
     incomplete = False
     if isinstance(structured_data, Mapping):
         fields.update(_normalize_field(str(key)) for key in structured_data)
+        nested_items = structured_data.get("items")
+        if isinstance(nested_items, Sequence) and not isinstance(nested_items, (str, bytes)):
+            rows = [row for row in nested_items if isinstance(row, Mapping)]
+            if rows:
+                key_sets = [{_normalize_field(str(key)) for key in row} for row in rows]
+                fields.update(set.intersection(*key_sets))
+                incomplete = any(keys != key_sets[0] for keys in key_sets[1:])
     elif isinstance(structured_data, Sequence) and not isinstance(structured_data, (str, bytes)):
         rows = [row for row in structured_data if isinstance(row, Mapping)]
         if rows:
@@ -184,6 +229,8 @@ def _present_fields(answer: str, structured_data: Any | None) -> tuple[set[str],
 
 
 def _infer_item_count(answer: str, structured_data: Any | None) -> int | None:
+    if isinstance(structured_data, Mapping) and isinstance(structured_data.get("items"), list):
+        return len(structured_data["items"])
     if isinstance(structured_data, Sequence) and not isinstance(structured_data, (str, bytes)):
         return len(structured_data)
     table_rows = [line for line in answer.splitlines() if line.strip().startswith("|") and line.strip().endswith("|")]

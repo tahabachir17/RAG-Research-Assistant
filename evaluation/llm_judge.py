@@ -39,14 +39,16 @@ class JudgeResult:
 class LLMJudge:
     """Judge only semantic checks using supplied evidence and no outside knowledge."""
 
-    def __init__(self, client: LLMClient, *, judge_model: str, model_under_test: str, cache_path: str | Path | None = None, temperature: float = 0.0) -> None:
+    def __init__(self, client: LLMClient, *, judge_model: str, model_under_test: str, judge_provider: str | None = None, cache_path: str | Path | None = None, temperature: float = 0.0, rubric_version: str = "evidence-v1") -> None:
         if not judge_model.strip() or judge_model.strip() == model_under_test.strip():
             raise ValueError("judge model must be non-empty and differ from model under test")
         if temperature != 0.0:
             raise ValueError("judge temperature must be 0.0 for repeatable evaluation")
         self.client = client
+        self.judge_provider = judge_provider or getattr(client, "provider", None)
         self.judge_model = judge_model
         self.model_under_test = model_under_test
+        self.rubric_version = rubric_version
         self.cache_path = Path(cache_path) if cache_path else None
         self._cache = self._load_cache()
 
@@ -61,7 +63,7 @@ class LLMJudge:
         inclusion_criteria: str = "",
         exclusion_criteria: dict[str, str] | None = None,
     ) -> JudgeResult:
-        key = self._key(question_id, answer)
+        key = self._key(question_id, question, answer, evidence, subjects, inclusion_criteria, exclusion_criteria or {})
         if key in self._cache:
             cached = _result_from_payload(self._cache[key])
             cached.cached = True
@@ -85,9 +87,7 @@ class LLMJudge:
             ensure_ascii=False,
         )
         try:
-            completion = coerce_completion(self.client.complete(system, user))
-            payload = json.loads(_strip_fence(completion.text))
-            verdicts = _parse_verdicts(payload)
+            verdicts = self._request_verdicts(system, user)
             result = JudgeResult("judged", verdicts)
         except Exception as exc:
             result = JudgeResult("unjudged", [], f"{type(exc).__name__}: {exc}")
@@ -95,11 +95,58 @@ class LLMJudge:
         self._save_cache()
         return result
 
-    def _key(self, question_id: str, answer: str) -> str:
-        response_hash = hashlib.sha256(answer.encode("utf-8")).hexdigest()
-        return "|".join(
-            (question_id, self.judge_model, self.model_under_test, response_hash)
-        )
+    def _request_verdicts(self, system: str, user: str) -> list[JudgeVerdict]:
+        """Use native JSON mode and allow one format-only correction."""
+
+        prompt = user
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                json_method = getattr(self.client, "complete_json", None)
+                raw = (
+                    json_method(system, prompt)
+                    if callable(json_method)
+                    else self.client.complete(system, prompt)
+                )
+                completion = coerce_completion(raw)
+                payload = json.loads(_strip_fence(completion.text))
+                return _parse_verdicts(payload)
+            except Exception as exc:
+                last_error = exc
+                if attempt == 0:
+                    prompt = (
+                        f"{user}\n\nYour previous response was not valid judge JSON. "
+                        "Return only one JSON object containing a verdicts array; "
+                        "do not include Markdown or commentary."
+                    )
+        assert last_error is not None
+        raise last_error
+
+    def _key(
+        self,
+        question_id: str,
+        question: str,
+        answer: str,
+        evidence: list[dict[str, Any]],
+        subjects: list[dict[str, Any]],
+        inclusion_criteria: str,
+        exclusion_criteria: dict[str, str],
+    ) -> str:
+        payload = {
+            "question_id": question_id,
+            "question": question,
+            "answer": answer,
+            "evidence": evidence,
+            "subjects": subjects,
+            "inclusion_criteria": inclusion_criteria,
+            "exclusion_criteria": exclusion_criteria,
+            "judge_provider": self.judge_provider,
+            "judge_model": self.judge_model,
+            "model_under_test": self.model_under_test,
+            "rubric_version": self.rubric_version,
+        }
+        canonical = json.dumps(payload, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+        return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
     def _load_cache(self) -> dict[str, Any]:
         if self.cache_path is None or not self.cache_path.is_file():

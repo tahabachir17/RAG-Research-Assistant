@@ -82,7 +82,7 @@ class GenerationEvaluator:
         }
         judge_metadata = {
             "enabled": self.judge is not None,
-            "provider": getattr(getattr(self.judge, "client", None), "provider", None),
+            "provider": self.judge.judge_provider if self.judge else None,
             "model": self.judge.judge_model if self.judge else None,
         }
         return {
@@ -152,10 +152,15 @@ class GenerationEvaluator:
         }
 
 
-def save_generation_outputs(evaluation: dict[str, Any], output_dir: str | Path) -> dict[str, Path]:
+def save_generation_outputs(
+    evaluation: dict[str, Any],
+    output_dir: str | Path,
+    *,
+    stamp: str | None = None,
+) -> dict[str, Path]:
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    stamp = stamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     base = directory / f"generation_eval_{stamp}"
     json_path, csv_path, markdown_path = base.with_suffix(".json"), base.with_suffix(".csv"), base.with_suffix(".md")
     json_path.write_text(json.dumps(evaluation, indent=2, ensure_ascii=False), encoding="utf-8")

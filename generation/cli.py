@@ -53,27 +53,43 @@ except ImportError:
     from retrieval.sparse_retriever import SparseRetriever
 
 try:
-    from .citation_handler import validate_citations
+    from .citation_handler import CitationValidationResult, validate_citations
     from .context_assembler import ContextAssembler
     from .llm_client import LLMClient, build_llm_client
     from .prompt_manager import PromptManager
     from .response_formatter import GeneratedAnswer, format_response
     from .response_validator import ResponseValidator, generate_with_validation
     from .streaming_handler import stream_answer_events
+    from .structured_answer import (
+        parse_and_render_structured_answer,
+        parse_and_render_structured_narrative,
+        structured_answer_instruction,
+        structured_narrative_instruction,
+    )
 except ImportError:
-    from citation_handler import validate_citations
+    from citation_handler import CitationValidationResult, validate_citations
     from context_assembler import ContextAssembler
     from llm_client import LLMClient, build_llm_client
     from prompt_manager import PromptManager
     from response_formatter import GeneratedAnswer, format_response
     from response_validator import ResponseValidator, generate_with_validation
     from streaming_handler import stream_answer_events
+    from structured_answer import (
+        parse_and_render_structured_answer,
+        parse_and_render_structured_narrative,
+        structured_answer_instruction,
+        structured_narrative_instruction,
+    )
 
 
 class OfflineDemoClient:
     """Deterministic client proving orchestration without testing model quality."""
 
-    answer = "The supplied context describes scaled dot-product attention [1]."
+    answer = (
+        '{"answer_status":"answered","summary":"","claims":['
+        '{"text":"The supplied context describes scaled dot-product attention.",'
+        '"citations":[1]}]}'
+    )
 
     def complete(
         self, system: str, user: str, *, stream: bool = False
@@ -116,20 +132,53 @@ def run_generation(
     if not context.citation_map:
         raise ValueError("No complete retrieval chunk fits in the context budget")
     system, user = PromptManager().render(template_name, context=context.context_block, question=question)
+    response_parser = None
+    if required_fields:
+        user = user + "\n\n" + structured_answer_instruction(required_fields, max_items)
+
+        def response_parser(text: str):
+            return parse_and_render_structured_answer(
+                text,
+                required_fields=required_fields,
+                valid_citations=set(context.citation_map),
+                max_items=max_items,
+            )
+    else:
+        user = user + "\n\n" + structured_narrative_instruction()
+
+        def response_parser(text: str):
+            return parse_and_render_structured_narrative(
+                text,
+                valid_citations=set(context.citation_map),
+            )
     if show_prompt:
         print("--- SYSTEM ---")
         print(system)
         print("--- USER ---")
         print(user)
     retries = Settings().GENERATION_MAX_RETRIES if max_retries is None else max_retries
+    generator = llm or OfflineDemoClient()
     outcome = generate_with_validation(
-        llm or OfflineDemoClient(),
+        generator,
         system,
         user,
         ResponseValidator(context.citation_map, required_fields=required_fields, max_items=max_items),
         max_retries=retries,
+        response_parser=response_parser,
     )
     citation_validation = validate_citations(outcome.answer, context.citation_map)
+    if (
+        isinstance(outcome.structured_data, dict)
+        and outcome.structured_data.get("answer_status") == "insufficient_evidence"
+        and not citation_validation.cited_numbers
+    ):
+        citation_validation = CitationValidationResult(
+            True,
+            [],
+            [],
+            sorted(context.citation_map),
+            [],
+        )
     return format_response(
         outcome.answer,
         context,
@@ -138,6 +187,8 @@ def run_generation(
         finish_reason=outcome.finish_reason,
         final_attempt=outcome.final_attempt,
         validation_failures=outcome.validation.failures,
+        provider=getattr(generator, "last_provider", None)
+        or getattr(generator, "provider", "offline"),
     )
 
 
@@ -340,13 +391,13 @@ def retrieve_ranked_results(
     question: str,
     index_path: str | Path,
     *,
-    top_k: int = 8,
+    top_k: int = 5,
     candidate_k: int | None = None,
     max_chunks_per_paper: int = 2,
     max_chunks_per_section: int = 1,
     excluded_sections: Collection[str] = DEFAULT_EXCLUDED_SECTIONS,
     reranker: Any | None = None,
-    expand_evidence_queries: bool = True,
+    expand_evidence_queries: bool = False,
 ) -> list[RetrievalResult]:
     """Search broadly, then select diverse evidence from the local BM25 corpus."""
 
@@ -478,7 +529,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             reranker=(
                 build_local_reranker(args.reranker_model) if args.rerank else None
             ),
-            expand_evidence_queries=not args.no_evidence_query_expansion,
+            expand_evidence_queries=args.evidence_query_expansion,
         )
     else:
         results = load_ranked_results(
@@ -594,7 +645,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--top-k",
         type=int,
-        default=8,
+        default=5,
         help="Number of diverse chunks passed to generation",
     )
     parser.add_argument(
@@ -631,9 +682,9 @@ def _parser() -> argparse.ArgumentParser:
         help="Local cross-encoder model directory; defaults to the project cache",
     )
     parser.add_argument(
-        "--no-evidence-query-expansion",
+        "--evidence-query-expansion",
         action="store_true",
-        help="Search only the literal question instead of method/evaluation/limitation facets",
+        help="Opt into four BM25 facet searches; slower and intended for difficult offline analysis",
     )
     parser.add_argument("--config", default="hybrid_rerank_mmr")
     parser.add_argument("--query-id")
@@ -641,7 +692,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--max-context-tokens", type=int, default=4000)
     parser.add_argument("--live", action="store_true")
     parser.add_argument(
-        "--provider", choices=("groq", "claude", "openai", "lmstudio", "ollama")
+        "--provider", choices=("router", "groq", "gemini", "claude", "openai", "lmstudio", "ollama")
     )
     parser.add_argument("--model")
     parser.add_argument(

@@ -17,7 +17,13 @@ class Settings(BaseSettings):
     LLM_MODEL: str = "llama-3.3-70b-versatile"
     LLM_MAX_TOKENS: int = Field(default=1024, gt=0)
     LLM_TEMPERATURE: float = Field(default=0.0, ge=0.0, le=2.0)
+    LLM_REQUEST_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0.0, le=120.0)
+    LLM_TRANSPORT_MAX_RETRIES: int = Field(default=0, ge=0, le=2)
     GENERATION_MAX_RETRIES: int = Field(default=1, ge=0, le=1)
+    ROUTER_PROVIDERS: str = "groq,gemini,lmstudio"
+    GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+    LMSTUDIO_MODEL: str = "qwen/qwen3-4b-2507"
     JUDGE_PROVIDER: str = "groq"
     JUDGE_MODEL: str = "llama-3.3-70b-versatile"
     JUDGE_MAX_TOKENS: int = Field(default=1024, gt=0)
@@ -25,6 +31,8 @@ class Settings(BaseSettings):
     RAGAS_REQUESTS_PER_SECOND: float = Field(default=0.05, gt=0.0, le=10.0)
     ANTHROPIC_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None
+    GEMINI_API_KEY: str | None = None
+    GEMINI_BASE_URL: str = "https://generativelanguage.googleapis.com/v1beta/openai/"
     OPENAI_API_KEY: str | None = None
     OPENAI_BASE_URL: str | None = None
     LMSTUDIO_API_KEY: str = "lm-studio"

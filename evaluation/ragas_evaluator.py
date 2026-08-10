@@ -49,6 +49,7 @@ def evaluate_with_ragas(
     embeddings: Any,
     timeout: int = 180,
     max_workers: int = 1,
+    max_retries: int = 1,
 ) -> dict[str, Any]:
     """Run reference-free RAGAS metrics and return JSON-serializable results."""
 
@@ -74,7 +75,7 @@ def evaluate_with_ragas(
         embeddings=embeddings,
         run_config=RunConfig(
             timeout=timeout,
-            max_retries=5,
+            max_retries=max_retries,
             max_wait=60,
             max_workers=max_workers,
         ),
@@ -112,20 +113,36 @@ def evaluate_with_ragas(
 def build_ragas_clients(settings: Any) -> tuple[Any, Any]:
     """Build a judge LLM and local embeddings without exposing credentials."""
 
-    from langchain_core.rate_limiters import InMemoryRateLimiter
     from langchain_huggingface import HuggingFaceEmbeddings
     from langchain_openai import ChatOpenAI
+
+    options = _ragas_llm_options(settings)
+    llm = ChatOpenAI(**options)
+    model_name = _local_embedding_snapshot(settings.EMBEDDING_MODEL)
+    embeddings = HuggingFaceEmbeddings(
+        model_name=model_name,
+        cache_folder="data/model_cache",
+        model_kwargs={"local_files_only": True},
+        encode_kwargs={"normalize_embeddings": True},
+    )
+    return llm, embeddings
+
+
+def _ragas_llm_options(settings: Any) -> dict[str, Any]:
+    """Resolve the OpenAI-compatible RAGAS judge without constructing it."""
 
     provider = settings.JUDGE_PROVIDER.strip().casefold()
     options: dict[str, Any] = {
         "model": settings.JUDGE_MODEL,
         "temperature": 0.0,
         "max_tokens": settings.JUDGE_MAX_TOKENS,
+        "timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS,
     }
     if provider == "groq":
         if not settings.GROQ_API_KEY:
             raise ValueError("GROQ_API_KEY is required for the RAGAS judge")
         from langchain_core._api import LangChainBetaWarning
+        from langchain_core.rate_limiters import InMemoryRateLimiter
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", LangChainBetaWarning)
@@ -146,25 +163,30 @@ def build_ragas_clients(settings: Any) -> tuple[Any, Any]:
         options["api_key"] = settings.OPENAI_API_KEY
         if settings.OPENAI_BASE_URL:
             options["base_url"] = settings.OPENAI_BASE_URL
-    elif provider in {"lmstudio", "lm-studio"}:
+    elif provider == "gemini":
+        api_key = settings.GEMINI_API_KEY or settings.OPENAI_API_KEY
+        if not api_key:
+            raise ValueError(
+                "GEMINI_API_KEY or OPENAI_API_KEY is required for the RAGAS judge"
+            )
+        options.update(
+            api_key=api_key,
+            base_url=settings.GEMINI_BASE_URL,
+            max_retries=2,
+        )
+        if settings.JUDGE_MODEL.casefold().startswith("gemini-3.5"):
+            options.pop("temperature", None)
+    elif provider in {"qwen", "lmstudio", "lm-studio"}:
         options.update(
             api_key=settings.LMSTUDIO_API_KEY,
             base_url=settings.LMSTUDIO_BASE_URL,
         )
     else:
         raise ValueError(
-            "RAGAS currently supports groq, openai, or lmstudio judge providers"
+            "RAGAS currently supports groq, gemini, openai, or qwen/LM Studio judge providers"
         )
 
-    llm = ChatOpenAI(**options)
-    model_name = _local_embedding_snapshot(settings.EMBEDDING_MODEL)
-    embeddings = HuggingFaceEmbeddings(
-        model_name=model_name,
-        cache_folder="data/model_cache",
-        model_kwargs={"local_files_only": True},
-        encode_kwargs={"normalize_embeddings": True},
-    )
-    return llm, embeddings
+    return options
 
 
 def _build_metrics() -> list[Any]:

@@ -194,14 +194,16 @@ This part turns ranked `RetrievalResult` chunks into bounded prompts and structu
 | `generation/prompt_manager.py` | Loads and caches YAML prompts, rejects unsafe names and malformed templates, and fails clearly when required variables are missing. |
 | `generation/context_assembler.py` | Converts ranked retrieval results into numbered, whole-chunk context blocks with a configurable token budget and citation map. |
 | `generation/citation_handler.py` | Validates numeric citation markers against the exact prompt context, hard-rejects provider-native markup without rewriting it, reports unknown/unused citations, and builds an ordered source list. |
-| `generation/llm_client.py` | Provides injectable synchronous and asynchronous clients for Claude, OpenAI, Groq, and Ollama; every completion carries provider finish metadata and token counts when available. |
+| `generation/llm_client.py` | Provides injectable synchronous and asynchronous clients for Claude, OpenAI, Gemini, Groq, LM Studio, and Ollama; every completion carries provider finish metadata and token counts when available. |
+| `generation/provider_router.py` | Routes non-streaming requests through the configured zero-cost provider order, defaulting to Groq, Gemini, and then LM Studio. |
+| `generation/structured_answer.py` | Parses cited JSON fields, rejects uncited or out-of-range factual cells, supports explicit insufficient-evidence answers, and renders Markdown deterministically. |
 | `generation/streaming_handler.py` | Produces incremental text or SSE-ready token/done events while buffering the complete answer for final citation validation. |
 | `generation/response_formatter.py` | Owns the chat response contract, including finish reason, validation failures, and whether the original or repaired attempt produced the answer. |
 | `generation/response_validator.py` | Applies deterministic citation, truncation, required-field, table-completeness, and max-item checks, then supports one failure-specific repair attempt. |
 | `generation/cli.py` | Provides an offline-by-default smoke harness, optional evaluator-result loading, streamed event output, and opt-in live provider calls. |
-| Six focused `tests/unit/test_*.py` generation test modules | Exercise prompt errors, context limits, citation failures, all provider branches, streaming interruption, and response formatting without network calls. |
+| Focused `tests/unit/test_*.py` generation test modules | Exercise prompt errors, context limits, citation failures, structured output, provider routing and rate limits, streaming interruption, and response formatting without network calls. |
 
-The validated local flow is: `RetrievalResult` â†’ numbered context â†’ rendered prompt â†’ injected LLM response â†’ citation validation â†’ `GeneratedAnswer.to_dict()`. The complete test suite currently passes 123 tests.
+The validated local flow is: `RetrievalResult` â†’ numbered context â†’ rendered prompt â†’ injected LLM response â†’ citation validation â†’ `GeneratedAnswer.to_dict()`. The complete test suite currently passes 165 tests.
 
 Known limitations are explicit: API and frontend integration are not part of this milestone; provider tests use injected clients rather than live services; streaming interruptions propagate without a false completion event; and unknown citations are reported rather than silently removed or rewritten. Source fields unavailable in `RetrievalResult` remain `null` or empty until a richer metadata lookup is connected.
 
@@ -218,12 +220,27 @@ Known limitations are explicit: API and frontend integration are not part of thi
 # Full local RAG test: prompt -> BM25 retrieval -> Groq -> cited full chunks.
 .\venv\Scripts\python.exe -m generation.cli "How does scaled dot-product attention work, and why is scaling needed?" --retrieve --live --provider groq
 
+# Zero-cost failover: Groq -> Gemini -> LM Studio.
+.\venv\Scripts\python.exe -m generation.cli "How does scaled dot-product attention work?" --retrieve --live --provider router
+```
+
 The RAG CLI retrieves 30 BM25 candidates by default, excludes references,
-bibliography, front matter, and acknowledgements, then selects 8 while allowing
+bibliography, front matter, and acknowledgements, then selects 5 while allowing
 at most 2 chunks per normalized paper ID and 1 chunk per paper section. Override
 the diversity controls with `--candidate-k`, `--top-k`,
 `--max-chunks-per-paper`, and `--max-chunks-per-section`. For diagnostics,
 `--include-low-information-sections` restores the excluded sections.
+
+The interactive default performs one literal BM25 search. Use
+`--evidence-query-expansion` only for difficult offline analysis; it performs
+four facet searches and therefore adds latency. Cross-encoder reranking remains
+opt-in because the persisted-corpus baseline showed no recall lift.
+
+Non-streaming answers use cited JSON internally and deterministic Markdown
+rendering externally. Ordinary answers are limited to a small set of atomic,
+individually cited claims; required-field evaluation questions use the same
+mechanism with a strict table schema. This keeps the API-facing answer readable
+without trusting a provider to produce or repair Markdown formatting.
 
 For higher semantic precision, add `--rerank`. This loads the cached
 `cross-encoder/ms-marco-MiniLM-L-6-v2` model, reranks the BM25 candidate pool
@@ -231,39 +248,59 @@ before diversity selection, and can add substantial CPU latency:
 
 ```powershell
 .\venv\Scripts\python.exe -m generation.cli "YOUR QUESTION" --retrieve --rerank --candidate-k 20 --live --provider groq
-```
 
 # Opt into a real configured provider.
 .\venv\Scripts\python.exe -m generation.cli --live --provider ollama --model llama3.1 --stream
 ```
 #### Generation answer-quality evaluation and runtime gates - 05/08/2026
 
-Generation now uses an independent evaluator rather than importing retrieval-evaluator internals. `evaluation/generation_metrics.py` is separate from the retrieval metrics module because claim grounding, citation coverage, field completeness, truncation, and qualifying-item classification are generation-stage concepts; keeping them separate avoids turning the stage-agnostic ranking module into mixed-purpose code. `evaluation/generation_evaluator.py` exercises the same `run_generation` validation-and-repair path used by the CLI and writes timestamped JSON, CSV, and Markdown breakdowns with latency and an injectable provider-cost estimate. `evaluation/llm_judge.py` judges only semantic support, qualification, limitation attribution, and item distinctness from supplied evidence; deterministic format checks never spend judge calls. Judge failures remain `unjudged`, and verdicts are cached by question, answer model, and response hash.
+Generation now uses an independent evaluator rather than importing retrieval-evaluator internals. `evaluation/generation_metrics.py` is separate from the retrieval metrics module because claim grounding, citation coverage, field completeness, truncation, and qualifying-item classification are generation-stage concepts; keeping them separate avoids turning the stage-agnostic ranking module into mixed-purpose code. `evaluation/generation_evaluator.py` exercises the same `run_generation` validation-and-repair path used by the CLI and writes timestamped JSON, CSV, and Markdown breakdowns with latency and an injectable provider-cost estimate. Required-field evaluations now request cited JSON and render the final table in code. `evaluation/llm_judge.py` judges only semantic support, qualification, limitation attribution, and item distinctness from supplied evidence; deterministic format checks never spend judge calls. Judge failures remain `unjudged`, and verdict caches now include the evidence, subjects, provider, model, and rubric version so changed evidence cannot reuse a stale verdict.
+
+Every new generation-evaluation JSON artifact records SHA-256 hashes for the
+golden file and QA prompt together with the BM25 path, context budget, output
+budget, and evaluation schema version. This makes cross-model runs comparable
+and exposes accidental changes to the benchmark.
 
 The first release-quality model comparison has **not** been run. The local candidate file contains 20 frozen-context hard questions, but 0 are marked human-reviewed and no human calibration verdicts have been supplied. The loader deliberately rejects these candidates when `require_reviewed=True`; consequently there are no honest groundedness, precision/recall, latency, or cost numbers to report yet, and none of the proposed quality thresholds is claimed as passing. This is a data-review blocker, not a model result. Exact-label judge/human calibration agreement is fixed at **at least 80%** before judge-based metrics may gate a release.
 
-The deterministic implementation is covered by the full offline suite: **123 tests pass**. These tests prove finish-reason propagation, truncation rejection, citation mapping/format failures, a single repair cap, metric arithmetic, judge outage behavior and caching, and all three artifact formats. They do not establish answer quality because provider calls are mocked. Cost remains `null` unless the evaluator is given a provider-specific cost estimator, preventing an unknown price from being presented as zero.
+The deterministic implementation is covered by the full offline suite: **165 tests pass**. These tests prove finish-reason propagation, truncation rejection, citation mapping/format failures, structured-output enforcement, provider fallback, bounded rate-limit recovery, provider/model resolution for generation and evaluation, a single repair cap, metric arithmetic, judge outage behavior and caching, and all three artifact formats. They do not establish answer quality because provider calls are mocked. Cost remains `null` unless the evaluator is given a provider-specific cost estimator, preventing an unknown price from being presented as zero.
 
 Suggested release gates remain starting hypotheses: no truncated final answers, 100% valid project citation syntax, at least 95% claim-level citation coverage, no unsupported qualifying items, at least 90% judge-supported claims, and 100% required-field completeness. They should be tuned only after human review and the first real run.
 
-### Run generation evaluation with LM Studio
+### Run generation evaluation
 
-The project treats LM Studio as a separate local provider while using its OpenAI-compatible API. The default local endpoint is `http://127.0.0.1:1234/v1`; `.env` selects the loaded `google/gemma-4-e4b` model.
+Generation is intentionally limited to Groq or Gemini. The semantic LLM judge
+and RAGAS use one shared evaluator target: Groq, Gemini, or local Qwen through
+LM Studio. The command prints the fully resolved matrix before making a model
+call, preventing a provider switch from silently retaining another provider's
+model.
 
-1. In LM Studio, open **Developer**, enable **Start server**, and leave the server on port `1234`.
-2. Run one question first to verify the model, prompt, frozen-context lookup, and output writing:
-
-```powershell
-.\venv\Scripts\python.exe -m evaluation.run_generation_eval --limit 1
-```
-
-3. Run all 20 candidate questions:
+Validate the default matrix without making model calls:
 
 ```powershell
-.\venv\Scripts\python.exe -m evaluation.run_generation_eval
+.\venv\Scripts\python.exe -m evaluation.run_generation_eval --dry-run
 ```
 
-Results are written as timestamped JSON, CSV, and Markdown files under `evaluation/data/eval_results`. By default, the run combines deterministic validation, the evidence-only LLM judge, and reference-free RAGAS faithfulness, answer-relevancy, and context-utilization scores. The RAGAS judge uses `JUDGE_PROVIDER`/`JUDGE_MODEL` and local sentence-transformer embeddings. Use `--no-ragas` for an offline/custom-metrics-only run. Reference-dependent RAGAS metrics are intentionally omitted until reviewed reference answers exist. Add `--require-reviewed` only after the golden questions have been human-reviewed; the current candidates intentionally fail that release gate.
+Run one answer with Groq 70B and evaluate it with the Groq 8B semantic judge
+and RAGAS:
+
+```powershell
+.\venv\Scripts\python.exe -m evaluation.run_generation_eval --limit 1 --provider groq --model llama-3.3-70b-versatile --judge-provider groq --judge-model llama-3.1-8b-instant
+```
+
+Switch both evaluation layers to Gemini without changing the generator:
+
+```powershell
+.\venv\Scripts\python.exe -m evaluation.run_generation_eval --limit 1 --provider groq --model llama-3.3-70b-versatile --judge-provider gemini --judge-model gemini-3.5-flash-lite
+```
+
+Use local Qwen for both evaluation layers after starting LM Studio:
+
+```powershell
+.\venv\Scripts\python.exe -m evaluation.run_generation_eval --limit 1 --provider groq --model llama-3.3-70b-versatile --judge-provider qwen --judge-model qwen/qwen3-4b-2507 --request-timeout 120 --ragas-timeout 300
+```
+
+Results are written as timestamped JSON, CSV, and Markdown files under `evaluation/data/eval_results`. By default, the run combines deterministic validation, the evidence-only LLM judge, and reference-free RAGAS faithfulness, answer-relevancy, and context-utilization scores. `--judge-provider` and `--judge-model` control both semantic judging and RAGAS. Use `--no-ragas` only when deliberately isolating generation/judge behavior. Reference-dependent RAGAS metrics are intentionally omitted until reviewed reference answers exist. Add `--require-reviewed` only after the golden questions have been human-reviewed; the current candidates intentionally fail that release gate.
 
 To add or retry RAGAS scoring without paying the generation cost again:
 

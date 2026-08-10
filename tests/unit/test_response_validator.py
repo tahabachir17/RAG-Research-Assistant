@@ -27,6 +27,14 @@ def test_empty_answer_without_context_is_allowed():
     assert ResponseValidator({}).validate("").valid is True
 
 
+def test_explicit_structured_abstention_does_not_require_citations_or_fields():
+    result = ResponseValidator(_map(), required_fields=["method"]).validate(
+        "The supplied passages do not support a qualifying method.",
+        structured_data={"answer_status": "insufficient_evidence", "items": []},
+    )
+    assert result.valid is True
+
+
 def test_generation_repairs_once_with_specific_failures():
     class Fake:
         def __init__(self):
@@ -44,3 +52,38 @@ def test_generation_repairs_once_with_specific_failures():
     assert len(result.attempts) == 2
     assert '"truncated"' in fake.calls[1]
     assert '"missing_citation"' in fake.calls[1]
+
+
+def test_generation_repairs_provider_rejected_json_draft():
+    class Fake:
+        def __init__(self):
+            self.calls = []
+            self.responses = iter(
+                [
+                    LLMCompletion('{"citations":[1][2]}', "provider_json_validation_failed"),
+                    LLMCompletion('{"answer":"fixed [1]"}', "stop"),
+                ]
+            )
+
+        def complete_json(self, system, user):
+            self.calls.append(user)
+            return next(self.responses)
+
+    def parser(text):
+        import json
+
+        payload = json.loads(text)
+        return payload["answer"], payload
+
+    fake = Fake()
+    result = generate_with_validation(
+        fake,
+        "system",
+        "user",
+        ResponseValidator(_map()),
+        max_retries=1,
+        response_parser=parser,
+    )
+    assert result.final_attempt == "repaired"
+    assert result.answer == "fixed [1]"
+    assert len(fake.calls) == 2

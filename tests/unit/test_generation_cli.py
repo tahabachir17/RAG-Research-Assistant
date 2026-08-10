@@ -24,6 +24,7 @@ def test_offline_generation_harness_returns_resolved_source():
     assert response.citations_valid is True
     assert response.sources[0]["paper_id"] == "1706.03762"
     assert response.sources[0]["chunk_id"] == "demo-transformer-method"
+    assert response.answer == "The supplied context describes scaled dot-product attention. [1]"
 
 
 def test_harness_loads_evaluator_rankings_and_selects_query(tmp_path):
@@ -146,6 +147,7 @@ def test_expanded_retrieval_bounds_candidates_before_reranking(monkeypatch, tmp_
         top_k=2,
         candidate_k=2,
         reranker=FakeReranker(),
+        expand_evidence_queries=True,
     )
     assert calls == 4
     assert len(results) == 2

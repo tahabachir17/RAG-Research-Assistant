@@ -1,6 +1,11 @@
 from __future__ import annotations
 
-from evaluation.ragas_evaluator import _build_metrics, build_ragas_records
+from config import Settings
+from evaluation.ragas_evaluator import (
+    _build_metrics,
+    _ragas_llm_options,
+    build_ragas_records,
+)
 from retrieval.models import RetrievalResult
 
 
@@ -79,3 +84,31 @@ def test_ragas_prefers_the_exact_context_seen_by_generation():
     )
 
     assert records[0]["contexts"] == ["Seen"]
+
+
+def test_ragas_qwen_uses_local_lmstudio_endpoint():
+    settings = Settings(
+        _env_file=None,
+        JUDGE_PROVIDER="qwen",
+        JUDGE_MODEL="qwen-local",
+        LLM_REQUEST_TIMEOUT_SECONDS=90,
+    )
+    options = _ragas_llm_options(settings)
+    assert options["model"] == "qwen-local"
+    assert options["base_url"] == settings.LMSTUDIO_BASE_URL
+    assert options["timeout"] == 90
+
+
+def test_ragas_gemini_preserves_existing_openai_key_fallback():
+    settings = Settings(
+        _env_file=None,
+        JUDGE_PROVIDER="gemini",
+        JUDGE_MODEL="gemini-3.5-flash-lite",
+        GEMINI_API_KEY=None,
+        OPENAI_API_KEY="existing-gemini-key",
+        LLM_REQUEST_TIMEOUT_SECONDS=20,
+    )
+    options = _ragas_llm_options(settings)
+    assert options["api_key"] == "existing-gemini-key"
+    assert options["base_url"] == settings.GEMINI_BASE_URL
+    assert "temperature" not in options
