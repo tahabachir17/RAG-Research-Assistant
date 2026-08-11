@@ -301,7 +301,26 @@ Use local Qwen for both evaluation layers after starting LM Studio:
 .\venv\Scripts\python.exe -m evaluation.run_generation_eval --limit 1 --provider groq --model llama-3.3-70b-versatile --judge-provider qwen --judge-model qwen/qwen3-4b-2507 --request-timeout 120 --ragas-timeout 300
 ```
 
-Results are written as timestamped JSON, CSV, and Markdown files under `evaluation/data/eval_results`. By default, the run combines deterministic validation, the evidence-only LLM judge, and reference-free RAGAS faithfulness, answer-relevancy, and context-utilization scores. `--judge-provider` and `--judge-model` control both semantic judging and RAGAS. Use `--no-ragas` only when deliberately isolating generation/judge behavior. Reference-dependent RAGAS metrics are intentionally omitted until reviewed reference answers exist. Add `--require-reviewed` only after the golden questions have been human-reviewed; the current candidates intentionally fail that release gate.
+Results are written as timestamped JSON, CSV, and Markdown files under `evaluation/data/eval_results`. By default, the run combines deterministic validation, the evidence-only LLM judge, and RAGAS scoring. `--judge-provider` and `--judge-model` control both semantic judging and RAGAS. Use `--no-ragas` only when deliberately isolating generation/judge behavior. Reference-dependent RAGAS metrics are marked unavailable until reviewed reference answers exist. Add `--require-reviewed` only after the golden questions have been human-reviewed; the current candidates intentionally fail that release gate.
+
+The resumable full-set command defaults to Groq generation and a distinct
+Gemini judge. It atomically checkpoints every generated question and every
+RAGAS metric value as it completes:
+
+```powershell
+.\venv\Scripts\python.exe -m evaluation.run_generation_eval --dataset evaluation\data\golden_generation_qa.json --generator-provider groq --judge-provider gemini --workers 1 --requests-per-second 0.05
+
+# Resume the newest compatible run, or name an exact JSON checkpoint.
+.\venv\Scripts\python.exe -m evaluation.run_generation_eval --dataset evaluation\data\golden_generation_qa.json --generator-provider groq --judge-provider gemini --workers 1 --requests-per-second 0.05 --resume
+.\venv\Scripts\python.exe -m evaluation.run_generation_eval --dataset evaluation\data\golden_generation_qa.json --generator-provider groq --judge-provider gemini --resume-from evaluation\data\eval_results\generation_eval_<timestamp>.json
+```
+
+Use `--chunk-count N` (or `--top-k N`) to rerun a single A5-style context
+count through the same durable command. The full metric schema includes
+faithfulness, answer relevancy, context precision, context recall, context
+utilization, and answer correctness. Reference-dependent values are explicitly
+recorded as unavailable when a golden record lacks `reference_answer`; they are
+never synthesized from the evidence passages.
 
 To add or retry RAGAS scoring without paying the generation cost again:
 

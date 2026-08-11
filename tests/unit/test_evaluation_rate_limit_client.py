@@ -36,3 +36,33 @@ def test_evaluation_client_does_not_retry_non_rate_error():
 
     with pytest.raises(LLMClientError):
         EvaluationRateLimitClient(Broken(), sleeper=lambda value: None).complete_json("s", "u")
+
+
+def test_evaluation_client_retries_dns_failure_then_succeeds():
+    class DnsFlap(FakeClient):
+        def complete_json(self, system, user):
+            self.calls += 1
+            if self.calls == 1:
+                raise LLMClientError("groq", "Temporary failure in name resolution")
+            return LLMCompletion('{"ok":true}', "stop")
+
+    waits = []
+    base = DnsFlap(failures=0)
+    result = EvaluationRateLimitClient(
+        base,
+        max_retries=2,
+        backoff_seconds=2,
+        sleeper=waits.append,
+    ).complete_json("s", "u")
+    assert result.text == '{"ok":true}'
+    assert base.calls == 2
+    assert waits == [2.25]
+
+
+def test_evaluation_client_exhausts_transient_retries():
+    base = FakeClient(failures=5)
+    with pytest.raises(LLMClientError):
+        EvaluationRateLimitClient(
+            base, max_retries=2, sleeper=lambda value: None
+        ).complete_json("s", "u")
+    assert base.calls == 3

@@ -32,6 +32,8 @@ class Settings(BaseSettings):
     JUDGE_MODEL: str = "llama-3.3-70b-versatile"
     JUDGE_MAX_TOKENS: int = Field(default=1024, gt=0)
     JUDGE_TEMPERATURE: float = Field(default=0.0, ge=0.0, le=2.0)
+    RAGAS_JUDGE_PROVIDER: str = "gemini"
+    RAGAS_JUDGE_MODEL: str = "gemini-3.5-flash-lite"
     RAGAS_REQUESTS_PER_SECOND: float = Field(default=0.05, gt=0.0, le=10.0)
     ANTHROPIC_API_KEY: str | None = None
     GROQ_API_KEY: str | None = None

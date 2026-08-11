@@ -21,6 +21,7 @@ class GenerationGoldenQuestion:
     calibration_verdicts: list[dict[str, str]]
     paper_id: str = ""
     title: str = ""
+    reference_answer: str | None = None
 
 
 def load_generation_golden(path: str | Path, *, require_reviewed: bool = False) -> list[GenerationGoldenQuestion]:
@@ -52,6 +53,9 @@ def load_generation_golden(path: str | Path, *, require_reviewed: bool = False) 
             list(record.get("calibration_verdicts", [])),
             str(record.get("paper_id", "")).strip(),
             str(record.get("title", "")).strip(),
+            _optional_text(
+                record.get("reference_answer", record.get("ground_truth"))
+            ),
         )
         if not item.retrieved_chunk_ids:
             raise ValueError(f"{identifier}: retrieved_chunk_ids must not be empty")
@@ -73,3 +77,8 @@ def _strings(value: Any) -> list[str]:
     if not isinstance(value, list):
         raise TypeError("golden list fields must be arrays")
     return list(dict.fromkeys(str(item).strip() for item in value if str(item).strip()))
+
+
+def _optional_text(value: Any) -> str | None:
+    text = str(value).strip() if value is not None else ""
+    return text or None

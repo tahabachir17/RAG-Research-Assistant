@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import sys
+import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -51,6 +53,7 @@ class LLMJudge:
         self.rubric_version = rubric_version
         self.cache_path = Path(cache_path) if cache_path else None
         self._cache = self._load_cache()
+        self._cache_lock = threading.Lock()
 
     def judge(
         self,
@@ -64,10 +67,11 @@ class LLMJudge:
         exclusion_criteria: dict[str, str] | None = None,
     ) -> JudgeResult:
         key = self._key(question_id, question, answer, evidence, subjects, inclusion_criteria, exclusion_criteria or {})
-        if key in self._cache:
-            cached = _result_from_payload(self._cache[key])
-            cached.cached = True
-            return cached
+        with self._cache_lock:
+            if key in self._cache:
+                cached = _result_from_payload(self._cache[key])
+                cached.cached = True
+                return cached
         system = (
             "You are an evidence-only evaluator. Use no outside knowledge. Judge only: "
             "claim support by cited evidence, item qualification, limitation attribution, "
@@ -99,8 +103,11 @@ class LLMJudge:
             result = JudgeResult("judged", verdicts)
         except Exception as exc:
             result = JudgeResult("unjudged", [], f"{type(exc).__name__}: {exc}")
-        self._cache[key] = asdict(result)
-        self._save_cache()
+        # Transient/exhausted failures must remain retryable on a resumed run.
+        if result.judge_status == "judged":
+            with self._cache_lock:
+                self._cache[key] = asdict(result)
+                self._save_cache()
         return result
 
     def _request_verdicts(
@@ -174,7 +181,11 @@ class LLMJudge:
         if self.cache_path is None:
             return
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-        self.cache_path.write_text(json.dumps(self._cache, indent=2, ensure_ascii=False), encoding="utf-8")
+        temporary = self.cache_path.with_suffix(self.cache_path.suffix + ".part")
+        temporary.write_text(
+            json.dumps(self._cache, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        os.replace(temporary, self.cache_path)
 
 
 def _parse_verdicts(

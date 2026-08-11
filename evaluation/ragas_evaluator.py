@@ -11,7 +11,22 @@ from typing import Any, Callable, Sequence
 from datasets import Dataset
 
 
-DEFAULT_METRIC_NAMES = ("faithfulness", "answer_relevancy", "context_utilization")
+DEFAULT_METRIC_NAMES = (
+    "faithfulness",
+    "answer_relevancy",
+    "context_precision",
+    "context_recall",
+    "context_utilization",
+    "answer_correctness",
+)
+LEGACY_REFERENCE_FREE_METRIC_NAMES = (
+    "faithfulness",
+    "answer_relevancy",
+    "context_utilization",
+)
+REFERENCE_METRIC_NAMES = frozenset(
+    {"context_precision", "context_recall", "answer_correctness"}
+)
 
 
 def build_ragas_records(
@@ -19,6 +34,7 @@ def build_ragas_records(
     *,
     context_lookup: Callable[[list[str]], Sequence[Any]],
     chunk_ids_by_question: dict[str, list[str]],
+    reference_by_question: dict[str, str | None] | None = None,
 ) -> list[dict[str, Any]]:
     """Convert generation output to the question/answer/contexts RAGAS schema."""
 
@@ -31,14 +47,16 @@ def build_ragas_records(
         contexts = [str(chunk.text) for chunk in context_lookup(chunk_ids)]
         if not contexts:
             raise ValueError(f"{question_id}: RAGAS requires at least one context")
-        records.append(
-            {
+        record = {
                 "id": question_id,
                 "question": str(row["question"]),
                 "answer": _ragas_answer(row),
                 "contexts": contexts,
             }
-        )
+        reference = (reference_by_question or {}).get(question_id)
+        if reference:
+            record["ground_truth"] = reference
+        records.append(record)
     return records
 
 
@@ -95,14 +113,16 @@ def evaluate_with_ragas(
     timeout: int = 180,
     max_workers: int = 1,
     max_retries: int = 1,
+    metric_names: Sequence[str] | None = None,
 ) -> dict[str, Any]:
     """Run reference-free RAGAS metrics and return JSON-serializable results."""
 
+    selected_metrics = tuple(metric_names or LEGACY_REFERENCE_FREE_METRIC_NAMES)
     if not records:
         return {
             "status": "skipped",
             "reason": "no generation records",
-            "metrics": list(DEFAULT_METRIC_NAMES),
+            "metrics": list(selected_metrics),
             "aggregate": {},
             "questions": [],
         }
@@ -110,12 +130,22 @@ def evaluate_with_ragas(
     from ragas import evaluate
     from ragas.run_config import RunConfig
 
+    unknown = set(selected_metrics) - set(DEFAULT_METRIC_NAMES)
+    if unknown:
+        raise ValueError(f"unknown RAGAS metrics: {sorted(unknown)}")
+    if REFERENCE_METRIC_NAMES.intersection(selected_metrics) and any(
+        not row.get("ground_truth") for row in records
+    ):
+        raise ValueError("reference-dependent RAGAS metrics require ground_truth")
+    fields = ["question", "answer", "contexts"]
+    if any(row.get("ground_truth") for row in records):
+        fields.append("ground_truth")
     dataset = Dataset.from_list(
-        [{key: row[key] for key in ("question", "answer", "contexts")} for row in records]
+        [{key: row[key] for key in fields if key in row} for row in records]
     )
     result = evaluate(
         dataset,
-        metrics=_build_metrics(),
+        metrics=_build_metrics(selected_metrics),
         llm=llm,
         embeddings=embeddings,
         run_config=RunConfig(
@@ -132,24 +162,24 @@ def evaluate_with_ragas(
         question_rows.append(
             {
                 "id": source["id"],
-                **{name: _finite_or_none(scores.get(name)) for name in DEFAULT_METRIC_NAMES},
+                **{name: _finite_or_none(scores.get(name)) for name in selected_metrics},
             }
         )
     aggregate = {
         name: _nullable_mean(row[name] for row in question_rows)
-        for name in DEFAULT_METRIC_NAMES
+        for name in selected_metrics
     }
     available = sum(
         row[name] is not None
         for row in question_rows
-        for name in DEFAULT_METRIC_NAMES
+        for name in selected_metrics
     )
-    expected = len(question_rows) * len(DEFAULT_METRIC_NAMES)
+    expected = len(question_rows) * len(selected_metrics)
     status = "completed" if available == expected else "partial" if available else "failed"
     return {
         "status": status,
         "reason": None if status == "completed" else f"{expected - available} of {expected} metric values were unavailable",
-        "metrics": list(DEFAULT_METRIC_NAMES),
+        "metrics": list(selected_metrics),
         "aggregate": aggregate,
         "questions": question_rows,
     }
@@ -176,31 +206,43 @@ def build_ragas_clients(settings: Any) -> tuple[Any, Any]:
 def _ragas_llm_options(settings: Any) -> dict[str, Any]:
     """Resolve the OpenAI-compatible RAGAS judge without constructing it."""
 
-    provider = settings.JUDGE_PROVIDER.strip().casefold()
+    explicit_fields = getattr(settings, "model_fields_set", set())
+    use_ragas_fields = bool(
+        {"RAGAS_JUDGE_PROVIDER", "RAGAS_JUDGE_MODEL"}.intersection(explicit_fields)
+    )
+    provider = (
+        getattr(settings, "RAGAS_JUDGE_PROVIDER", settings.JUDGE_PROVIDER)
+        if use_ragas_fields
+        else settings.JUDGE_PROVIDER
+    ).strip().casefold()
+    model = (
+        getattr(settings, "RAGAS_JUDGE_MODEL", settings.JUDGE_MODEL)
+        if use_ragas_fields
+        else settings.JUDGE_MODEL
+    )
     options: dict[str, Any] = {
-        "model": settings.JUDGE_MODEL,
+        "model": model,
         "temperature": 0.0,
         "max_tokens": settings.JUDGE_MAX_TOKENS,
         "timeout": settings.LLM_REQUEST_TIMEOUT_SECONDS,
     }
+    from langchain_core._api import LangChainBetaWarning
+    from langchain_core.rate_limiters import InMemoryRateLimiter
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", LangChainBetaWarning)
+        options["rate_limiter"] = InMemoryRateLimiter(
+            requests_per_second=settings.RAGAS_REQUESTS_PER_SECOND,
+            check_every_n_seconds=0.1,
+            max_bucket_size=1,
+        )
     if provider == "groq":
         if not settings.GROQ_API_KEY:
             raise ValueError("GROQ_API_KEY is required for the RAGAS judge")
-        from langchain_core._api import LangChainBetaWarning
-        from langchain_core.rate_limiters import InMemoryRateLimiter
-
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore", LangChainBetaWarning)
-            rate_limiter = InMemoryRateLimiter(
-                requests_per_second=settings.RAGAS_REQUESTS_PER_SECOND,
-                check_every_n_seconds=0.1,
-                max_bucket_size=1,
-            )
         options.update(
             api_key=settings.GROQ_API_KEY,
             base_url="https://api.groq.com/openai/v1",
             max_retries=5,
-            rate_limiter=rate_limiter,
         )
     elif provider == "openai":
         if not settings.OPENAI_API_KEY:
@@ -219,7 +261,7 @@ def _ragas_llm_options(settings: Any) -> dict[str, Any]:
             base_url=settings.GEMINI_BASE_URL,
             max_retries=2,
         )
-        if settings.JUDGE_MODEL.casefold().startswith("gemini-3.5"):
+        if model.casefold().startswith("gemini-3.5"):
             options.pop("temperature", None)
     elif provider in {"qwen", "lmstudio", "lm-studio"}:
         options.update(
@@ -234,18 +276,31 @@ def _ragas_llm_options(settings: Any) -> dict[str, Any]:
     return options
 
 
-def _build_metrics() -> list[Any]:
+def _build_metrics(
+    metric_names: Sequence[str] = LEGACY_REFERENCE_FREE_METRIC_NAMES,
+) -> list[Any]:
     """Use provider-compatible, independently instantiated RAGAS metrics."""
 
-    from ragas.metrics import AnswerRelevancy, ContextUtilization, Faithfulness
+    from ragas.metrics import (
+        AnswerCorrectness,
+        AnswerRelevancy,
+        ContextPrecision,
+        ContextRecall,
+        ContextUtilization,
+        Faithfulness,
+    )
 
-    return [
-        Faithfulness(),
+    factories = {
+        "faithfulness": Faithfulness,
         # RAGAS maps strictness to the OpenAI-compatible `n` parameter, while
         # Groq accepts only n=1.
-        AnswerRelevancy(strictness=1),
-        ContextUtilization(),
-    ]
+        "answer_relevancy": lambda: AnswerRelevancy(strictness=1),
+        "context_precision": ContextPrecision,
+        "context_recall": ContextRecall,
+        "context_utilization": ContextUtilization,
+        "answer_correctness": AnswerCorrectness,
+    }
+    return [factories[name]() for name in metric_names]
 
 
 def _local_embedding_snapshot(model_name: str) -> str:

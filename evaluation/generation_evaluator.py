@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 import re
 import statistics
 from collections.abc import Mapping, Sequence
@@ -55,44 +56,17 @@ class GenerationEvaluator:
 
     def evaluate(self, questions: list[GenerationGoldenQuestion]) -> dict[str, Any]:
         runs = [self._evaluate_one(question) for question in questions]
-        judged_labels = [v["verdict"] for run in runs for v in run["judge_verdicts"] if v["check"] == "claim_support"]
-        calibration = [run["calibration_exact_agreement"] for run in runs if run["calibration_exact_agreement"] is not None]
-        item_labels = [v["verdict"] for run in runs for v in run["judge_verdicts"] if v["check"] == "item_qualification"]
-        aggregate = {
-            "questions": len(runs),
-            "citation_validity_rate": _mean(run["citation_valid"] for run in runs),
-            "claim_level_citation_coverage": _mean(run["claim_citation_coverage"] for run in runs),
-            "required_field_completeness": _mean(run["required_field_completeness"] for run in runs),
-            "truncation_rate": truncation_rate(run["finish_reason"] for run in runs),
-            "retry_rate": _mean(run["retry_count"] > 0 for run in runs),
-            "max_item_compliance_rate": _mean(run["max_item_compliant"] for run in runs),
-            "qualifying_item_precision": _nullable_mean(run["qualifying_item_precision"] for run in runs),
-            "qualifying_item_recall": _nullable_mean(run["qualifying_item_recall"] for run in runs),
-            "unsupported_claim_rate": unsupported_claim_rate(judged_labels),
-            "incorrect_classification_rate": unsupported_claim_rate(item_labels),
-            "unsupported_qualifying_items": sum(label == "unsupported" for label in item_labels),
-            "grounded_claim_rate": (
-                _mean(label == "supported" for label in judged_labels)
-                if judged_labels
-                else None
-            ),
-            "judge_coverage": _mean(run["judge_status"] == "judged" for run in runs),
-            "calibration_exact_agreement": _nullable_mean(calibration),
-            "avg_latency_ms": _mean(run["latency_ms"] for run in runs),
-            "avg_cost": _nullable_mean(run["estimated_cost"] for run in runs),
-        }
-        judge_metadata = {
-            "enabled": self.judge is not None,
-            "provider": self.judge.judge_provider if self.judge else None,
-            "model": self.judge.judge_model if self.judge else None,
-        }
-        return {
-            "provider": self.provider,
-            "model": self.model,
-            "judge": judge_metadata,
-            "aggregate": aggregate,
-            "questions": runs,
-        }
+        return build_generation_result(
+            runs,
+            provider=self.provider,
+            model=self.model,
+            judge=self.judge,
+        )
+
+    def evaluate_one(self, question: GenerationGoldenQuestion) -> dict[str, Any]:
+        """Evaluate one question so callers can checkpoint immediately."""
+
+        return self._evaluate_one(question)
 
     def _evaluate_one(self, question: GenerationGoldenQuestion) -> dict[str, Any]:
         chunks = self.chunk_lookup(question.retrieved_chunk_ids)
@@ -163,6 +137,78 @@ class GenerationEvaluator:
         }
 
 
+def build_generation_result(
+    runs: list[dict[str, Any]],
+    *,
+    provider: str,
+    model: str,
+    judge: LLMJudge | None = None,
+) -> dict[str, Any]:
+    """Aggregate already-completed question rows without model calls."""
+
+    judged_labels = [
+        verdict["verdict"]
+        for run in runs
+        for verdict in run["judge_verdicts"]
+        if verdict["check"] == "claim_support"
+    ]
+    calibration = [
+        run["calibration_exact_agreement"]
+        for run in runs
+        if run["calibration_exact_agreement"] is not None
+    ]
+    item_labels = [
+        verdict["verdict"]
+        for run in runs
+        for verdict in run["judge_verdicts"]
+        if verdict["check"] == "item_qualification"
+    ]
+    aggregate = {
+        "questions": len(runs),
+        "citation_validity_rate": _mean(run["citation_valid"] for run in runs),
+        "claim_level_citation_coverage": _mean(
+            run["claim_citation_coverage"] for run in runs
+        ),
+        "required_field_completeness": _mean(
+            run["required_field_completeness"] for run in runs
+        ),
+        "truncation_rate": truncation_rate(run["finish_reason"] for run in runs),
+        "retry_rate": _mean(run["retry_count"] > 0 for run in runs),
+        "max_item_compliance_rate": _mean(run["max_item_compliant"] for run in runs),
+        "qualifying_item_precision": _nullable_mean(
+            run["qualifying_item_precision"] for run in runs
+        ),
+        "qualifying_item_recall": _nullable_mean(
+            run["qualifying_item_recall"] for run in runs
+        ),
+        "unsupported_claim_rate": unsupported_claim_rate(judged_labels),
+        "incorrect_classification_rate": unsupported_claim_rate(item_labels),
+        "unsupported_qualifying_items": sum(
+            label == "unsupported" for label in item_labels
+        ),
+        "grounded_claim_rate": (
+            _mean(label == "supported" for label in judged_labels)
+            if judged_labels
+            else None
+        ),
+        "judge_coverage": _mean(run["judge_status"] == "judged" for run in runs),
+        "calibration_exact_agreement": _nullable_mean(calibration),
+        "avg_latency_ms": _mean(run["latency_ms"] for run in runs),
+        "avg_cost": _nullable_mean(run["estimated_cost"] for run in runs),
+    }
+    return {
+        "provider": provider,
+        "model": model,
+        "judge": {
+            "enabled": judge is not None,
+            "provider": judge.judge_provider if judge else None,
+            "model": judge.judge_model if judge else None,
+        },
+        "aggregate": aggregate,
+        "questions": runs,
+    }
+
+
 def save_generation_outputs(
     evaluation: dict[str, Any],
     output_dir: str | Path,
@@ -174,13 +220,30 @@ def save_generation_outputs(
     stamp = stamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     base = directory / f"generation_eval_{stamp}"
     json_path, csv_path, markdown_path = base.with_suffix(".json"), base.with_suffix(".csv"), base.with_suffix(".md")
-    json_path.write_text(json.dumps(evaluation, indent=2, ensure_ascii=False), encoding="utf-8")
-    fields = ["id", "reviewed", "citation_valid", "claim_citation_coverage", "required_field_completeness", "finish_reason", "retry_count", "max_item_compliant", "qualifying_item_precision", "qualifying_item_recall", "judge_status", "latency_ms", "estimated_cost"]
-    with csv_path.open("w", newline="", encoding="utf-8") as handle:
+    _atomic_text(json_path, json.dumps(evaluation, indent=2, ensure_ascii=False))
+    ragas_metrics = list(evaluation.get("ragas", {}).get("metrics", []))
+    fields = ["id", "reviewed", "citation_valid", "claim_citation_coverage", "required_field_completeness", "finish_reason", "retry_count", "max_item_compliant", "qualifying_item_precision", "qualifying_item_recall", "judge_status", "latency_ms", "estimated_cost", *ragas_metrics]
+    ragas_by_id = {
+        str(row.get("id")): row
+        for row in evaluation.get("ragas", {}).get("questions", [])
+    }
+    csv_temporary = csv_path.with_suffix(csv_path.suffix + ".part")
+    with csv_temporary.open("w", newline="", encoding="utf-8") as handle:
         writer = csv.DictWriter(handle, fieldnames=fields)
         writer.writeheader()
-        writer.writerows({field: row.get(field) for field in fields} for row in evaluation["questions"])
-    markdown_path.write_text(_markdown(evaluation), encoding="utf-8")
+        writer.writerows(
+            {
+                field: (
+                    row.get(field)
+                    if field not in ragas_metrics
+                    else ragas_by_id.get(str(row.get("id")), {}).get(field)
+                )
+                for field in fields
+            }
+            for row in evaluation["questions"]
+        )
+    os.replace(csv_temporary, csv_path)
+    _atomic_text(markdown_path, _markdown(evaluation))
     return {"json": json_path, "csv": csv_path, "markdown": markdown_path}
 
 
@@ -271,6 +334,13 @@ def _markdown(evaluation: dict[str, Any]) -> str:
         f"| {aggregate['citation_validity_rate']:.3f} | {aggregate['claim_level_citation_coverage']:.3f} | {aggregate['required_field_completeness']:.3f} | {aggregate['truncation_rate']:.3f} | {aggregate['retry_rate']:.3f} | {_format_nullable(aggregate['grounded_claim_rate'])} | {aggregate['judge_coverage']:.3f} | {aggregate['avg_latency_ms']:.1f} | {cost} |",
         "", "## Per-question failures", "",
     ]
+    coverage = evaluation.get("coverage")
+    if coverage:
+        lines[4:4] = [
+            f"Dataset coverage: {coverage.get('evaluated', 0)}/{coverage.get('total', 0)} evaluated; "
+            f"{coverage.get('reviewed', 0)} reviewed; {coverage.get('unreviewed', 0)} unreviewed.",
+            "",
+        ]
     for row in evaluation["questions"]:
         failures = ", ".join(row["validation_failures"]) or "none"
         lines.append(f"- `{row['id']}`: validation={failures}; judge={row['judge_status']}; latency={row['latency_ms']} ms.")
@@ -279,20 +349,25 @@ def _markdown(evaluation: dict[str, Any]) -> str:
         lines.extend(["", "## RAGAS (reference-free)", ""])
         if ragas.get("status") in {"completed", "partial"}:
             scores = ragas.get("aggregate", {})
+            metric_names = list(ragas.get("metrics", [])) or [
+                "faithfulness",
+                "answer_relevancy",
+                "context_utilization",
+            ]
             lines.extend(
                 [
-                    "| faithfulness | answer relevancy | context utilization |",
-                    "|---:|---:|---:|",
+                    "| " + " | ".join(name.replace("_", " ") for name in metric_names) + " |",
+                    "|" + "---:|" * len(metric_names),
                     "| "
                     + " | ".join(
                         _format_nullable(scores.get(name))
-                        for name in ("faithfulness", "answer_relevancy", "context_utilization")
+                        for name in metric_names
                     )
                     + " |",
                 ]
             )
-            if ragas.get("status") == "partial":
-                lines.append(f"\nPartial result: {ragas.get('reason', 'some metrics were unavailable')}.")
+            if ragas.get("reason"):
+                lines.append(f"\nNote: {ragas['reason']}.")
         else:
             lines.append(f"RAGAS status: {ragas.get('status', 'unknown')} ({ragas.get('reason', 'no reason')}).")
     return "\n".join(lines) + "\n"
@@ -300,3 +375,9 @@ def _markdown(evaluation: dict[str, Any]) -> str:
 
 def _format_nullable(value: Any) -> str:
     return "unavailable" if value is None else f"{float(value):.3f}"
+
+
+def _atomic_text(path: Path, content: str) -> None:
+    temporary = path.with_suffix(path.suffix + ".part")
+    temporary.write_text(content, encoding="utf-8")
+    os.replace(temporary, path)
