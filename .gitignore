@@ -14,7 +14,7 @@ __pycache__/
 .env
 
 data/
-
+evaluation/data
 # Pytest cache
 pytest_cache/
 .pytest_cache/

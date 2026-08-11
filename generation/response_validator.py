@@ -90,7 +90,9 @@ class ResponseValidator:
         failures: list[str] = []
         if _is_truncated(finish_reason):
             failures.append("truncated")
-        citations = validate_citations(answer, self.citation_map)
+        citations = validate_citations(
+            answer, self.citation_map, structured_data=structured_data
+        )
         is_abstention = (
             isinstance(structured_data, Mapping)
             and structured_data.get("answer_status") == "insufficient_evidence"

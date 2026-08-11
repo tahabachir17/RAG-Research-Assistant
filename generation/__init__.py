@@ -4,11 +4,13 @@ from __future__ import annotations
 
 try:
     from .citation_handler import (
+        ClaimSupportFlag,
         CitationValidationResult,
         build_source_list,
         validate_citations,
     )
     from .context_assembler import AssembledContext, CitationSource, ContextAssembler
+    from .faithfulness_verifier import FaithfulnessVerifier, build_faithfulness_verifier
     from .llm_client import (
         ClaudeClient,
         GeminiClient,
@@ -29,11 +31,13 @@ try:
     from .structured_answer import StructuredAnswerError, parse_and_render_structured_answer, parse_and_render_structured_narrative, render_structured_answer, structured_answer_instruction, structured_narrative_instruction
 except ImportError:
     from citation_handler import (
+        ClaimSupportFlag,
         CitationValidationResult,
         build_source_list,
         validate_citations,
     )
     from context_assembler import AssembledContext, CitationSource, ContextAssembler
+    from faithfulness_verifier import FaithfulnessVerifier, build_faithfulness_verifier
     from llm_client import (
         ClaudeClient,
         GeminiClient,
@@ -56,9 +60,11 @@ __all__ = [
     "AssembledContext",
     "CitationSource",
     "CitationValidationResult",
+    "ClaimSupportFlag",
     "ClaudeClient",
     "ContextAssembler",
     "GeneratedAnswer",
+    "FaithfulnessVerifier",
     "GeminiClient",
     "LLMClient",
     "LLMClientError",
@@ -76,6 +82,7 @@ __all__ = [
     "ValidationResult",
     "ValidatedGeneration",
     "build_llm_client",
+    "build_faithfulness_verifier",
     "build_zero_cost_router",
     "build_source_list",
     "format_response",

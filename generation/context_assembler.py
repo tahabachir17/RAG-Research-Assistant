@@ -27,6 +27,7 @@ class CitationSource:
     year: int | None
     section: str
     url: str | None
+    text: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -112,6 +113,7 @@ class ContextAssembler:
                 year=year,
                 section=section,
                 url=url,
+                text=result.text,
             )
             seen_sections.add(dedupe_key)
         return AssembledContext("\n\n".join(blocks), citation_map)

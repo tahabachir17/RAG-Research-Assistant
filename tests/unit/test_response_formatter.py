@@ -34,3 +34,4 @@ def test_format_response_matches_chat_contract_and_filters_sources():
     assert payload["unknown_citations"] == [9]
     assert payload["latency_ms"] >= 0
     assert payload["structured_data"] == structured
+    assert payload["claim_support"][0]["checker"] == "lexical_overlap"

@@ -7,6 +7,7 @@ from generation.structured_answer import (
     parse_and_render_structured_answer,
     parse_and_render_structured_narrative,
     structured_answer_instruction,
+    structured_narrative_instruction,
 )
 
 
@@ -29,6 +30,7 @@ def test_structured_answer_instruction_bounds_local_model_output():
     assert "one central contribution" in instruction
     assert "Do not combine evidence about different methods" in instruction
     assert "Do not split one method or contribution" in instruction
+    assert "strongest and most direct answer in the first item" in instruction
 
 
 def test_structured_answer_rejects_uncited_factual_cell():
@@ -99,6 +101,10 @@ def test_structured_narrative_renders_atomic_claim_citations():
         "Values are combined using attention weights. [2]"
     )
     assert len(structured["claims"]) == 2
+
+
+def test_structured_narrative_places_direct_answer_first():
+    assert "first claim directly answers the question" in structured_narrative_instruction()
 
 
 def test_structured_narrative_rejects_overcitation_outside_context():

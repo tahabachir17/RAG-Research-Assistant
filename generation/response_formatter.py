@@ -27,6 +27,7 @@ class GeneratedAnswer:
     validation_failures: list[str] | None = None
     provider: str | None = None
     structured_data: Any | None = None
+    claim_support: list[dict[str, Any]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -68,4 +69,5 @@ def format_response(
         validation_failures=list(validation_failures or []),
         provider=provider,
         structured_data=structured_data,
+        claim_support=[asdict(flag) for flag in validation.claim_support or []],
     )

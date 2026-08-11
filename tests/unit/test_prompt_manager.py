@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import pytest
 
-from generation.prompt_manager import PromptManager
+from generation.prompt_manager import (
+    PromptManager,
+    compound_question_instruction,
+    detect_question_parts,
+)
 
 
 def test_prompt_manager_loads_caches_and_renders_strict_variables(tmp_path):
@@ -56,3 +60,29 @@ def test_repository_prompt_templates_render():
     assert "paper title alone" in system
     assert "[1] evidence" in user
     assert "Question: Q" in user
+    assert "direct answer in the first sentence" in system
+
+
+def test_detect_question_parts_handles_multiple_marks_and_question_stems():
+    assert detect_question_parts("What method is used? Why does it help?") == [
+        "What method is used",
+        "Why does it help",
+    ]
+    assert detect_question_parts(
+        "What method is used and how is it evaluated?"
+    ) == ["What method is used", "how is it evaluated"]
+
+
+def test_detect_question_parts_does_not_split_simple_coordinated_nouns():
+    assert detect_question_parts("Compare BM25 and dense retrieval.") == [
+        "Compare BM25 and dense retrieval."
+    ]
+    assert compound_question_instruction("What is BM25?") == ""
+
+
+def test_compound_question_instruction_lists_each_detected_part():
+    instruction = compound_question_instruction(
+        "Which model is used? How was it evaluated?"
+    )
+    assert "Part 1: Which model is used" in instruction
+    assert "Part 2: How was it evaluated" in instruction

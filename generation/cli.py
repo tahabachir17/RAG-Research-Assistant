@@ -55,8 +55,12 @@ except ImportError:
 try:
     from .citation_handler import CitationValidationResult, validate_citations
     from .context_assembler import ContextAssembler
+    from .faithfulness_verifier import (
+        FaithfulnessVerifier,
+        build_faithfulness_verifier,
+    )
     from .llm_client import LLMClient, build_llm_client
-    from .prompt_manager import PromptManager
+    from .prompt_manager import PromptManager, compound_question_instruction
     from .response_formatter import GeneratedAnswer, format_response
     from .response_validator import ResponseValidator, generate_with_validation
     from .streaming_handler import stream_answer_events
@@ -69,8 +73,9 @@ try:
 except ImportError:
     from citation_handler import CitationValidationResult, validate_citations
     from context_assembler import ContextAssembler
+    from faithfulness_verifier import FaithfulnessVerifier, build_faithfulness_verifier
     from llm_client import LLMClient, build_llm_client
-    from prompt_manager import PromptManager
+    from prompt_manager import PromptManager, compound_question_instruction
     from response_formatter import GeneratedAnswer, format_response
     from response_validator import ResponseValidator, generate_with_validation
     from streaming_handler import stream_answer_events
@@ -124,6 +129,7 @@ def run_generation(
     required_fields: Sequence[str] = (),
     max_items: int | None = None,
     max_retries: int | None = None,
+    faithfulness_verifier: FaithfulnessVerifier | None = None,
 ) -> GeneratedAnswer:
     """Run generation through deterministic validation and one repair attempt."""
 
@@ -132,6 +138,9 @@ def run_generation(
     if not context.citation_map:
         raise ValueError("No complete retrieval chunk fits in the context budget")
     system, user = PromptManager().render(template_name, context=context.context_block, question=question)
+    compound_instruction = compound_question_instruction(question)
+    if compound_instruction:
+        user = user + "\n\n" + compound_instruction
     response_parser = None
     if required_fields:
         user = user + "\n\n" + structured_answer_instruction(required_fields, max_items)
@@ -156,7 +165,8 @@ def run_generation(
         print(system)
         print("--- USER ---")
         print(user)
-    retries = Settings().GENERATION_MAX_RETRIES if max_retries is None else max_retries
+    settings = Settings()
+    retries = settings.GENERATION_MAX_RETRIES if max_retries is None else max_retries
     generator = llm or OfflineDemoClient()
     outcome = generate_with_validation(
         generator,
@@ -166,7 +176,24 @@ def run_generation(
         max_retries=retries,
         response_parser=response_parser,
     )
-    citation_validation = validate_citations(outcome.answer, context.citation_map)
+    citation_validation = validate_citations(
+        outcome.answer,
+        context.citation_map,
+        structured_data=outcome.structured_data,
+    )
+    verifier = faithfulness_verifier
+    if verifier is None and settings.ENABLE_FAITHFULNESS_VERIFIER:
+        verifier = build_faithfulness_verifier(settings)
+    if verifier is not None:
+        verifier_flags = verifier.verify(
+            context,
+            outcome.answer,
+            structured_data=outcome.structured_data,
+        )
+        citation_validation.claim_support = [
+            *(citation_validation.claim_support or []),
+            *verifier_flags,
+        ]
     if (
         isinstance(outcome.structured_data, dict)
         and outcome.structured_data.get("answer_status") == "insufficient_evidence"

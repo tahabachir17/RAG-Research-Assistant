@@ -14,6 +14,7 @@ def _source(number, paper_id):
         year=2020 + number,
         section="results",
         url=f"https://example.test/{paper_id}",
+        text="Dense retrieval improves factual answer grounding on the benchmark.",
     )
 
 
@@ -69,3 +70,41 @@ def test_provider_native_citation_markup_is_hard_rejected():
     result = validate_citations("Claim 【2†L1-L8】 and valid [1].", {1: _source(1, "p1")})
     assert result.valid is False
     assert result.unsupported_markers == ["【2†L1-L8】"]
+
+
+def test_supported_claim_has_structured_lexical_overlap_flag():
+    result = validate_citations(
+        "Dense retrieval improves answer grounding [1].", {1: _source(1, "p1")}
+    )
+
+    assert result.claim_support[0].status == "supported"
+    assert result.claim_support[0].score > 0.2
+
+
+def test_unsupported_claim_is_flagged_without_hiding_it():
+    result = validate_citations(
+        "Quantum processors predict rainfall [1].", {1: _source(1, "p1")}
+    )
+
+    assert result.valid is True
+    assert result.claim_support[0].status == "unsupported"
+    assert result.claim_support[0].claim == "Quantum processors predict rainfall"
+
+
+def test_claim_support_flags_unknown_and_missing_citations():
+    structured = {
+        "claims": [
+            {"text": "Unknown source", "citations": [9]},
+            {"text": "Missing source", "citations": []},
+        ]
+    }
+    result = validate_citations(
+        "Unknown source [9]. Missing source.",
+        {1: _source(1, "p1")},
+        structured_data=structured,
+    )
+
+    assert [flag.status for flag in result.claim_support] == [
+        "unknown_citation",
+        "missing_citation",
+    ]

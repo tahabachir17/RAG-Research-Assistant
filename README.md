@@ -193,7 +193,8 @@ This part turns ranked `RetrievalResult` chunks into bounded prompts and structu
 | `config/prompts/*.yaml` | Defines strict Jinja templates for cited Q&A, summarization, paper comparison, and HyDE retrieval expansion. |
 | `generation/prompt_manager.py` | Loads and caches YAML prompts, rejects unsafe names and malformed templates, and fails clearly when required variables are missing. |
 | `generation/context_assembler.py` | Converts ranked retrieval results into numbered, whole-chunk context blocks with a configurable token budget and citation map. |
-| `generation/citation_handler.py` | Validates numeric citation markers against the exact prompt context, hard-rejects provider-native markup without rewriting it, reports unknown/unused citations, and builds an ordered source list. |
+| `generation/citation_handler.py` | Validates numeric citation markers, reports structured lexical claim-support flags, hard-rejects provider-native markup, and builds an ordered source list. |
+| `generation/faithfulness_verifier.py` | Optionally performs one evidence-only auxiliary audit and appends verdicts to the same claim-support flags. |
 | `generation/llm_client.py` | Provides injectable synchronous and asynchronous clients for Claude, OpenAI, Gemini, Groq, LM Studio, and Ollama; every completion carries provider finish metadata and token counts when available. |
 | `generation/provider_router.py` | Routes non-streaming requests through the configured zero-cost provider order, defaulting to Groq, Gemini, and then LM Studio. |
 | `generation/structured_answer.py` | Parses cited JSON fields, rejects uncited or out-of-range factual cells, supports explicit insufficient-evidence answers, and renders Markdown deterministically. |
@@ -203,7 +204,7 @@ This part turns ranked `RetrievalResult` chunks into bounded prompts and structu
 | `generation/cli.py` | Provides an offline-by-default smoke harness, optional evaluator-result loading, streamed event output, and opt-in live provider calls. |
 | Focused `tests/unit/test_*.py` generation test modules | Exercise prompt errors, context limits, citation failures, structured output, provider routing and rate limits, streaming interruption, and response formatting without network calls. |
 
-The validated local flow is: `RetrievalResult` â†’ numbered context â†’ rendered prompt â†’ injected LLM response â†’ citation validation â†’ `GeneratedAnswer.to_dict()`. The complete test suite currently passes 173 tests.
+The validated local flow is: `RetrievalResult` â†’ numbered context â†’ rendered prompt â†’ injected LLM response â†’ citation validation â†’ `GeneratedAnswer.to_dict()`. The complete test suite currently passes 186 tests.
 
 Known limitations are explicit: API and frontend integration are not part of this milestone; provider tests use injected clients rather than live services; streaming interruptions propagate without a false completion event; and unknown citations are reported rather than silently removed or rewritten. Source fields unavailable in `RetrievalResult` remain `null` or empty until a richer metadata lookup is connected.
 
@@ -263,7 +264,7 @@ and exposes accidental changes to the benchmark.
 
 The first release-quality model comparison has **not** been run. The local candidate file contains 20 frozen-context hard questions, but 0 are marked human-reviewed and no human calibration verdicts have been supplied. The loader deliberately rejects these candidates when `require_reviewed=True`; consequently there are no honest groundedness, precision/recall, latency, or cost numbers to report yet, and none of the proposed quality thresholds is claimed as passing. This is a data-review blocker, not a model result. Exact-label judge/human calibration agreement is fixed at **at least 80%** before judge-based metrics may gate a release.
 
-The deterministic implementation is covered by the full offline suite: **173 tests pass**. These tests prove finish-reason propagation, truncation rejection, citation mapping/format failures, structured-output enforcement, empty and duplicate-row rejection, provider fallback, bounded rate-limit recovery, provider/model resolution for generation and evaluation, a single repair cap, metric arithmetic, judge outage behavior and caching, RAGAS narrative projection, offline chunk-tokenizer fallback, and all three artifact formats. They do not establish answer quality because provider calls are mocked. Cost remains `null` unless the evaluator is given a provider-specific cost estimator, preventing an unknown price from being presented as zero.
+The deterministic implementation is covered by the full offline suite: **186 tests pass**. These tests cover citation mapping and lexical claim-support flags, optional verifier behavior, compound-question handling, structured output, provider routing, bounded repair, evaluation metrics, RAGAS projection, and artifact generation. They do not establish answer quality because provider calls are mocked. Cost remains `null` unless the evaluator is given a provider-specific cost estimator, preventing an unknown price from being presented as zero.
 
 Suggested release gates remain starting hypotheses: no truncated final answers, 100% valid project citation syntax, at least 95% claim-level citation coverage, no unsupported qualifying items, at least 90% judge-supported claims, and 100% required-field completeness. They should be tuned only after human review and the first real run.
 
@@ -307,6 +308,27 @@ To add or retry RAGAS scoring without paying the generation cost again:
 ```powershell
 .\venv\Scripts\python.exe -m evaluation.run_ragas_eval evaluation\data\eval_results\generation_eval_<timestamp>.json
 ```
+
+Run the isolated nested 4/5/8-chunk generation ablation without changing the
+production default:
+
+```powershell
+.\venv\Scripts\python.exe -m evaluation.run_context_count_experiment --limit 1 --counts 4 5 8 --provider groq --model llama-3.3-70b-versatile --judge-provider groq --judge-model llama-3.1-8b-instant
+```
+
+The complete 11/08/2026 retry used Gemini 3.5 Flash Lite as the RAGAS judge and
+produced these raw one-question values:
+
+| chunks | faithfulness | answer relevancy | context utilization |
+|---:|---:|---:|---:|
+| 4 | 0.9231 | 0.4120 | 1.0000 |
+| 5 | 1.0000 | 0.4066 | 0.7000 |
+| 8 | 1.0000 | 0.4120 | 0.7000 |
+
+This is diagnostic rather than a basis for changing `RERANK_TOP_K`: it uses
+one unreviewed question and answer relevancy is effectively tied. Four chunks
+used all supplied context, while five and eight used only 70%, so the production
+default remains unchanged pending a reviewed multi-question run.
 
 RAGAS uses provider-compatible answer relevancy (`strictness=1`, therefore `n=1`) and throttles Groq calls to `RAGAS_REQUESTS_PER_SECOND=0.05` by default. Increase that value only when the judge account has a larger token-per-minute allowance. The re-score path evaluates the exact context chunks seen by generation when the result contains `context_chunk_ids`.
 

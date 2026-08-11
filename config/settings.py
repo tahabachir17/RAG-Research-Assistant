@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     LLM_REQUEST_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0.0, le=120.0)
     LLM_TRANSPORT_MAX_RETRIES: int = Field(default=0, ge=0, le=2)
     GENERATION_MAX_RETRIES: int = Field(default=1, ge=0, le=1)
+    ENABLE_FAITHFULNESS_VERIFIER: bool = False
+    FAITHFULNESS_VERIFIER_PROVIDER: str = "groq"
+    FAITHFULNESS_VERIFIER_MODEL: str = "llama-3.1-8b-instant"
+    FAITHFULNESS_VERIFIER_MAX_TOKENS: int = Field(default=512, gt=0)
     ROUTER_PROVIDERS: str = "groq,gemini,lmstudio"
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
     GEMINI_MODEL: str = "gemini-3.5-flash-lite"

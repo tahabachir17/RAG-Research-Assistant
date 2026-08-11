@@ -80,6 +80,46 @@ class PromptManager:
         return system, user
 
 
+_QUESTION_STEM = re.compile(
+    r"\b(?:what|which|who|when|where|why|how|compare|contrast|describe|explain|"
+    r"identify|list|report|evaluate|summarize)\b",
+    re.IGNORECASE,
+)
+
+
+def detect_question_parts(question: str) -> list[str]:
+    """Detect explicit multi-part questions with a conservative heuristic."""
+
+    if not isinstance(question, str):
+        raise TypeError("question must be a string")
+    normalized = " ".join(question.split())
+    if not normalized:
+        raise ValueError("question must not be empty")
+    marked = [part.strip(" ,;?") for part in re.findall(r"[^?]+\?", normalized)]
+    marked = [part for part in marked if part]
+    if len(marked) > 1:
+        return marked
+    for match in re.finditer(r"\s+(?:and|as well as)\s+", normalized, re.IGNORECASE):
+        left = normalized[: match.start()].strip(" ,;?")
+        right = normalized[match.end() :].strip(" ,;?")
+        if left and right and _QUESTION_STEM.search(left) and _QUESTION_STEM.search(right):
+            return [left, right]
+    return [normalized.strip("?")]
+
+
+def compound_question_instruction(question: str) -> str:
+    """Return an explicit coverage contract only for detected compound questions."""
+
+    parts = detect_question_parts(question)
+    if len(parts) < 2:
+        return ""
+    enumerated = " ".join(f"Part {index}: {part}" for index, part in enumerate(parts, 1))
+    return (
+        "This is a multi-part question. Address each part explicitly and separately, "
+        "in this order, without fusing their answers: " + enumerated
+    )
+
+
 def _normalize_name(template_name: str) -> str:
     if not isinstance(template_name, str):
         raise TypeError("template_name must be a string")

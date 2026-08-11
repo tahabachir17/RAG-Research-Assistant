@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from generation.citation_handler import ClaimSupportFlag
 from generation.cli import (
     add_retrieved_evidence,
     build_evidence_queries,
@@ -25,6 +26,32 @@ def test_offline_generation_harness_returns_resolved_source():
     assert response.sources[0]["paper_id"] == "1706.03762"
     assert response.sources[0]["chunk_id"] == "demo-transformer-method"
     assert response.answer == "The supplied context describes scaled dot-product attention. [1]"
+
+
+def test_generation_appends_optional_verifier_flags_to_response():
+    class Verifier:
+        def verify(self, context, answer, *, structured_data=None):
+            return [
+                ClaimSupportFlag(
+                    "claim-1",
+                    "The supplied context describes scaled dot-product attention.",
+                    [1],
+                    "supported",
+                    "llm_self_check",
+                    "Directly supported.",
+                )
+            ]
+
+    response = run_generation(
+        "What attention is used?",
+        load_ranked_results(),
+        faithfulness_verifier=Verifier(),
+    )
+
+    assert [flag["checker"] for flag in response.claim_support] == [
+        "lexical_overlap",
+        "llm_self_check",
+    ]
 
 
 def test_harness_loads_evaluator_rankings_and_selects_query(tmp_path):
