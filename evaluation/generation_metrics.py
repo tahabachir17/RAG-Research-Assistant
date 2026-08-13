@@ -9,14 +9,14 @@ from typing import Any
 def concept_recall(answer: str, required_concepts: Iterable[str]) -> float | None:
     """Return deterministic normalized-phrase recall for required concepts."""
 
-    concepts = _normalized_set(required_concepts)
+    concepts = {
+        _normalized_phrase(concept)
+        for concept in required_concepts
+        if _normalized_phrase(concept)
+    }
     if not concepts:
         return None
-    normalized_answer = " ".join(
-        "".join(character if character.isalnum() else " " for character in answer)
-        .casefold()
-        .split()
-    )
+    normalized_answer = _normalized_phrase(answer)
     covered = sum(concept in normalized_answer for concept in concepts)
     return covered / len(concepts)
 
@@ -137,3 +137,11 @@ def _normalized_set(values: Iterable[str]) -> set[str]:
         for value in values
         if str(value).strip()
     }
+
+
+def _normalized_phrase(value: str) -> str:
+    return " ".join(
+        "".join(character if character.isalnum() else " " for character in str(value))
+        .casefold()
+        .split()
+    )

@@ -7,10 +7,15 @@ from evaluation.generation_metrics import concept_recall
 
 
 def test_concept_recall_full_coverage_ignores_case_and_punctuation():
-    answer = "Parallel convolutional computation; recurrent pooling."
+    answer = "Parallel convolutional computation; recurrent pooling for long distance context."
 
     assert concept_recall(
-        answer, ["parallel convolutional computation", "recurrent pooling"]
+        answer,
+        [
+            "parallel convolutional computation",
+            "recurrent pooling",
+            "long-distance context",
+        ],
     ) == 1.0
 
 

@@ -17,10 +17,12 @@ try:
     from processing.bm25_indexer import BM25Indexer
     from retrieval.models import RetrievalResult
     from .generation_golden import GenerationGoldenQuestion, load_generation_golden
+    from .layered_reporting import build_evaluation_layers, render_layered_sections
 except ImportError:
     from processing.bm25_indexer import BM25Indexer
     from retrieval.models import RetrievalResult
     from generation_golden import GenerationGoldenQuestion, load_generation_golden
+    from layered_reporting import build_evaluation_layers, render_layered_sections
 
 
 LOGGER = logging.getLogger(__name__)
@@ -293,6 +295,8 @@ def _markdown(payload: dict[str, Any]) -> str:
         f"RAGAS judge: `{payload['judge']['provider']}` / `{payload['judge']['model']}`",
         "",
     ]
+    lines.extend(render_layered_sections(build_evaluation_layers(payload)).splitlines())
+    lines.append("")
     for title, key, group_field in (
         ("By source tier", "by_source_tier", "source_tier"),
         ("By alignment status", "by_alignment_status", "alignment_status"),
