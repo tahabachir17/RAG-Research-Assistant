@@ -51,6 +51,11 @@ class ContextAssembler:
         *,
         token_counter: Callable[[str], int] | None = None,
         dedupe_paper_sections: bool = False,
+        evidence_packing_mode: str = "gold",
+        adjacent_chunk_lookup: Callable[[RetrievalResult], Sequence[RetrievalResult]]
+        | None = None,
+        section_chunk_lookup: Callable[[RetrievalResult], Sequence[RetrievalResult]]
+        | None = None,
     ) -> None:
         if (
             not isinstance(max_context_tokens, int)
@@ -60,23 +65,34 @@ class ContextAssembler:
             raise ValueError("max_context_tokens must be a positive integer")
         if token_counter is not None and not callable(token_counter):
             raise TypeError("token_counter must be callable")
+        if evidence_packing_mode not in {"gold", "adjacent", "section"}:
+            raise ValueError("evidence_packing_mode must be gold, adjacent, or section")
         self.max_context_tokens = max_context_tokens
         self.token_counter = token_counter or _whitespace_tokens
         self.dedupe_paper_sections = bool(dedupe_paper_sections)
+        self.evidence_packing_mode = evidence_packing_mode
+        self.adjacent_chunk_lookup = adjacent_chunk_lookup
+        self.section_chunk_lookup = section_chunk_lookup
 
-    def assemble(self, ranked_chunks: Sequence[RetrievalResult]) -> AssembledContext:
+    def assemble(
+        self,
+        ranked_chunks: Sequence[RetrievalResult],
+        *,
+        required_concepts: Sequence[str] = (),
+    ) -> AssembledContext:
         if isinstance(ranked_chunks, (str, bytes)) or not isinstance(
             ranked_chunks, Sequence
         ):
             raise TypeError("ranked_chunks must be a sequence of RetrievalResult")
         if any(not isinstance(item, RetrievalResult) for item in ranked_chunks):
             raise TypeError("ranked_chunks may contain only RetrievalResult objects")
+        packed_chunks = self._pack(ranked_chunks, required_concepts)
 
         blocks: list[str] = []
         citation_map: dict[int, CitationSource] = {}
         seen_sections: set[tuple[str, str]] = set()
         used_tokens = 0
-        for result in ranked_chunks:
+        for result in packed_chunks:
             paper_id = result.paper_id or ""
             section = result.section or "unknown"
             dedupe_key = (paper_id, section.casefold())
@@ -117,6 +133,37 @@ class ContextAssembler:
             )
             seen_sections.add(dedupe_key)
         return AssembledContext("\n\n".join(blocks), citation_map)
+
+    def _pack(
+        self,
+        ranked_chunks: Sequence[RetrievalResult],
+        required_concepts: Sequence[str],
+    ) -> list[RetrievalResult]:
+        if self.evidence_packing_mode == "gold" or len(required_concepts) <= 1:
+            return list(ranked_chunks)
+        lookup = (
+            self.adjacent_chunk_lookup
+            if self.evidence_packing_mode == "adjacent"
+            else self.section_chunk_lookup
+        )
+        if lookup is None:
+            raise ValueError(
+                f"{self.evidence_packing_mode} evidence packing requires a chunk lookup"
+            )
+        packed: list[RetrievalResult] = []
+        seen: set[str] = set()
+        for gold in ranked_chunks:
+            candidates = [gold, *lookup(gold)]
+            for candidate in candidates:
+                if not isinstance(candidate, RetrievalResult):
+                    raise TypeError("evidence packing lookups must return RetrievalResult")
+                if candidate.paper_id != gold.paper_id or candidate.section != gold.section:
+                    continue
+                if candidate.chunk_id in seen:
+                    continue
+                seen.add(candidate.chunk_id)
+                packed.append(candidate)
+        return packed
 
 
 def _whitespace_tokens(text: str) -> int:
