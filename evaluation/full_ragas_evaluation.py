@@ -38,6 +38,17 @@ TARGETS = {
     "context_recall": 0.70,
     "answer_correctness": 0.75,
 }
+DIAGNOSTIC_ONLY_METRICS = frozenset({"answer_relevancy"})
+
+
+def metric_release_result(metric: str, mean: float | None) -> str:
+    """Return release status while keeping uncalibrated metrics diagnostic-only."""
+
+    if metric in DIAGNOSTIC_ONLY_METRICS:
+        return "diagnostic only"
+    if mean is None:
+        return "unavailable"
+    return "pass" if mean > TARGETS[metric] else "below"
 
 
 def assemble_evaluation_questions(
@@ -294,7 +305,7 @@ def _markdown(payload: dict[str, Any]) -> str:
         for row in payload["aggregates"][key]:
             mean = row["mean"]
             target = TARGETS[row["metric"]]
-            result = "unavailable" if mean is None else ("pass" if mean > target else "below")
+            result = metric_release_result(row["metric"], mean)
             lines.append(
                 f"| {row[group_field]} | {row['metric']} | {_score(mean)} | > {target:.2f} | {result} | {row['scored']} | {row['unavailable']} |"
             )

@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "source_run": "controlled_generation_ragas_20260813",
+  "label_policy": "Judge whether the answer directly addresses the question, independent of completeness.",
+  "cases": [
+    {"question_id":"controlled-submodular-01","question":"What type of summarization is trained?","answer":"The proposed supervised method trains extractive multi-document summarization.","human_label":"directly_relevant","ragas_answer_relevancy":0.4641699446183964},
+    {"question_id":"controlled-submodular-02","question":"Why does structural-SVM learning improve on manually tuned models?","answer":"It outperforms hand-tuned models, handles many features, and controls overfitting.","human_label":"directly_relevant","ragas_answer_relevancy":0.9278003936511626},
+    {"question_id":"controlled-enquirer-01","question":"What are queries executed against?","answer":"The model executes queries against knowledge-base tables.","human_label":"directly_relevant","ragas_answer_relevancy":0.705429714307299},
+    {"question_id":"controlled-enquirer-02","question":"How are multi-step queries handled?","answer":"It stacks executors learned end to end from query-answer pairs.","human_label":"directly_relevant","ragas_answer_relevancy":0.8788936285412052},
+    {"question_id":"controlled-qrnn-01","question":"How much faster can QRNNs be?","answer":"QRNNs can be up to 16 times faster.","human_label":"directly_relevant","ragas_answer_relevancy":0.8415626760260801},
+    {"question_id":"controlled-qrnn-02","question":"How do QRNNs combine convolutional and recurrent properties?","answer":"They exploit both parallelism and context.","human_label":"partially_relevant","ragas_answer_relevancy":0.844975576836633},
+    {"question_id":"controlled-nsm-01","question":"What are the two system components?","answer":"A neural programmer and a symbolic computer.","human_label":"directly_relevant","ragas_answer_relevancy":0.558585470986947},
+    {"question_id":"controlled-nsm-02","question":"How is weakly supervised training stabilized?","answer":"It uses REINFORCE and pseudo-gold programs.","human_label":"directly_relevant","ragas_answer_relevancy":0.6095669499319141},
+    {"question_id":"controlled-video-01","question":"Which mechanisms model local and global structure?","answer":"A 3-D CNN and temporal attention.","human_label":"directly_relevant","ragas_answer_relevancy":0.6656782490220137},
+    {"question_id":"controlled-video-02","question":"Why is averaging frame features inadequate?","answer":"It discards temporal structure and object order.","human_label":"directly_relevant","ragas_answer_relevancy":0.9376574475812824},
+    {"question_id":"controlled-reddit-01","question":"Which architecture performed best?","answer":"The bidirectional-LSTM dependence model performed best.","human_label":"directly_relevant","ragas_answer_relevancy":0.2917820909277043},
+    {"question_id":"controlled-reddit-02","question":"What limitations and improvements are identified?","answer":"It trails the oracle; timing and backtracking are proposed improvements.","human_label":"directly_relevant","ragas_answer_relevancy":0.5291096741630557}
+  ]
+}
