@@ -200,6 +200,7 @@ def _record(
         "question": question,
         "retrieved_chunk_ids": list(context_ids),
         "expected_qualifying_items": [],
+        "required_concepts": [],
         "excluded_items": {},
         "required_fields": required_fields,
         "max_items": 3,

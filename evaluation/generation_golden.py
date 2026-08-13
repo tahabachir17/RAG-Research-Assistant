@@ -25,6 +25,7 @@ class GenerationGoldenQuestion:
     reference_context_ids: list[str] = field(default_factory=list)
     source_dataset: str = ""
     alignment_status: str = ""
+    required_concepts: list[str] = field(default_factory=list)
 
 
 def load_generation_golden(
@@ -65,6 +66,7 @@ def load_generation_golden(
             _strings(record.get("reference_context_ids", [])),
             str(record.get("source_dataset", "")).strip().casefold(),
             str(record.get("alignment_status", "")).strip().casefold(),
+            _strings(record.get("required_concepts", [])),
         )
         if not item.retrieved_chunk_ids and not item.source_dataset:
             raise ValueError(f"{identifier}: retrieved_chunk_ids must not be empty")

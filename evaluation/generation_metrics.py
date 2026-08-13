@@ -6,6 +6,21 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 
+def concept_recall(answer: str, required_concepts: Iterable[str]) -> float | None:
+    """Return deterministic normalized-phrase recall for required concepts."""
+
+    concepts = _normalized_set(required_concepts)
+    if not concepts:
+        return None
+    normalized_answer = " ".join(
+        "".join(character if character.isalnum() else " " for character in answer)
+        .casefold()
+        .split()
+    )
+    covered = sum(concept in normalized_answer for concept in concepts)
+    return covered / len(concepts)
+
+
 def qualifying_item_precision(
     predicted: Iterable[str], expected: Iterable[str]
 ) -> float | None:

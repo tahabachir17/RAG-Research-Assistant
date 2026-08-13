@@ -19,6 +19,7 @@ try:
     from .generation_golden import GenerationGoldenQuestion
     from .generation_metrics import (
         claim_level_citation_coverage,
+        concept_recall,
         direct_context_precision,
         direct_context_recall,
         qualifying_item_precision,
@@ -34,6 +35,7 @@ except ImportError:
     from generation_golden import GenerationGoldenQuestion
     from generation_metrics import (
         claim_level_citation_coverage,
+        concept_recall,
         direct_context_precision,
         direct_context_recall,
         qualifying_item_precision,
@@ -205,6 +207,10 @@ class GenerationEvaluator:
                 reviewed=question.reviewed and bool(question.reference_context_ids),
             ),
             "answer": generated.answer,
+            "required_concepts": question.required_concepts,
+            "concept_recall": concept_recall(
+                generated.answer, question.required_concepts
+            ),
             "structured_data": generated.structured_data,
             "sources": generated.sources,
             "context_chunk_ids": generated.context_chunk_ids,
@@ -287,6 +293,7 @@ def build_generation_result(
         "required_field_completeness": _mean(
             run["required_field_completeness"] for run in runs
         ),
+        "concept_recall": _nullable_mean(run.get("concept_recall") for run in runs),
         "truncation_rate": truncation_rate(run["finish_reason"] for run in runs),
         "retry_rate": _mean(run["retry_count"] > 0 for run in runs),
         "max_item_compliance_rate": _mean(run["max_item_compliant"] for run in runs),
@@ -356,6 +363,7 @@ def save_generation_outputs(
         "citation_valid",
         "claim_citation_coverage",
         "required_field_completeness",
+        "concept_recall",
         "finish_reason",
         "retry_count",
         "max_item_compliant",
