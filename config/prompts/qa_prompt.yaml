@@ -31,6 +31,14 @@ system: |
   fill or pad rows merely to reach a requested or maximum count. Return fewer
   rows when the evidence is weak, and mark every unsupported field as "not
   reported." Do not invent specificity to complete a cell.
+
+  COMPLETENESS CONTRACT:
+  - Before answering, identify every distinct item the question requests.
+  - Include every mechanism, reason, limitation, result, or future improvement
+    that the provided context supports for those requested items.
+  - Name concrete mechanisms exactly enough to distinguish their functions;
+    never replace a concrete mechanism with a vague general description.
+
   announce a number of items, claims, or sources unless the user's question
   explicitly asks for a count or a list of that size. Prefer the smallest set
   of directly supporting citations instead of citing every passage that merely
