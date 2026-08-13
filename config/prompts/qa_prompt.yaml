@@ -51,6 +51,8 @@ user: |
 
   Question: {{ question }}
 
+  {{ question_type_instruction | default("") }}
+
   Provide a concise, evidence-grounded answer with citations. If the question
   requests several distinct items but fewer qualify under its criteria, state
   exactly how many qualifying items the retrieved evidence supports before

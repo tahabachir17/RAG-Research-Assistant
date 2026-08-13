@@ -62,7 +62,11 @@ try:
         build_faithfulness_verifier,
     )
     from .llm_client import LLMClient, build_llm_client
-    from .prompt_manager import PromptManager, compound_question_instruction
+    from .prompt_manager import (
+        PromptManager,
+        compound_question_instruction,
+        question_type_instruction,
+    )
     from .response_formatter import GeneratedAnswer, format_response
     from .response_validator import ResponseValidator, generate_with_validation
     from .streaming_handler import stream_answer_events
@@ -77,7 +81,11 @@ except ImportError:
     from context_assembler import ContextAssembler
     from faithfulness_verifier import FaithfulnessVerifier, build_faithfulness_verifier
     from llm_client import LLMClient, build_llm_client
-    from prompt_manager import PromptManager, compound_question_instruction
+    from prompt_manager import (
+        PromptManager,
+        compound_question_instruction,
+        question_type_instruction,
+    )
     from response_formatter import GeneratedAnswer, format_response
     from response_validator import ResponseValidator, generate_with_validation
     from streaming_handler import stream_answer_events
@@ -139,7 +147,12 @@ def run_generation(
     context = ContextAssembler(max_context_tokens=max_context_tokens).assemble(ranked_results)
     if not context.citation_map:
         raise ValueError("No complete retrieval chunk fits in the context budget")
-    system, user = PromptManager().render(template_name, context=context.context_block, question=question)
+    system, user = PromptManager().render(
+        template_name,
+        context=context.context_block,
+        question=question,
+        question_type_instruction=question_type_instruction(question),
+    )
     compound_instruction = compound_question_instruction(question)
     if compound_instruction:
         user = user + "\n\n" + compound_instruction
@@ -240,7 +253,10 @@ async def run_streaming_generation(
     if not context.citation_map:
         raise ValueError("No complete retrieval chunk fits in the context budget")
     system, user = PromptManager().render(
-        template_name, context=context.context_block, question=question
+        template_name,
+        context=context.context_block,
+        question=question,
+        question_type_instruction=question_type_instruction(question),
     )
     if show_prompt:
         print("--- SYSTEM ---")

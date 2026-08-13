@@ -55,6 +55,8 @@ class PromptManager:
 
     def render(self, template_name: str, **variables: Any) -> tuple[str, str]:
         prompt = self.load(template_name)
+        if prompt.name == "qa_prompt":
+            variables.setdefault("question_type_instruction", "")
         required = set()
         try:
             for source in (prompt.system, prompt.user):
@@ -118,6 +120,51 @@ def compound_question_instruction(question: str) -> str:
         "This is a multi-part question. Address each part explicitly and separately, "
         "in this order, without fusing their answers: " + enumerated
     )
+
+
+QUESTION_TYPE_INSTRUCTIONS = {
+    "direct_fact": "Give a short, direct answer before any supporting detail.",
+    "mechanism": "Enumerate each supported mechanism and explain what each one does.",
+    "causes_evidence": (
+        "Enumerate each supported cause, then pair it with the reported evidence."
+    ),
+    "limitations_future_work": (
+        "Separate current limitations from proposed future improvements."
+    ),
+    "comparison": (
+        "Compare both subjects along the same evidence-supported dimensions."
+    ),
+}
+
+
+def classify_question_type(question: str) -> str:
+    """Classify a question into one of the five supported answer structures."""
+
+    if not isinstance(question, str):
+        raise TypeError("question must be a string")
+    normalized = " ".join(question.casefold().split())
+    if not normalized:
+        raise ValueError("question must not be empty")
+    if re.search(r"\blimitations?\b|\bfuture work\b|\bimprovements?\b", normalized):
+        return "limitations_future_work"
+    if re.search(r"\bcompare\b|\bcontrast\b|\bversus\b|\bvs\.?\b|\bdiffer", normalized):
+        return "comparison"
+    if normalized.startswith("why ") or re.search(
+        r"\b(?:better|advantage|outperform|improv(?:e|es|ed|ement))\b", normalized
+    ):
+        return "causes_evidence"
+    if normalized.startswith("how ") or re.search(
+        r"\b(?:mechanism|work|operate|achieve)\b", normalized
+    ):
+        return "mechanism"
+    return "direct_fact"
+
+
+def question_type_instruction(question: str) -> str:
+    """Return the distinct prompt fragment for a classified question."""
+
+    question_type = classify_question_type(question)
+    return f"Question type: {question_type}. {QUESTION_TYPE_INSTRUCTIONS[question_type]}"
 
 
 def _normalize_name(template_name: str) -> str:
