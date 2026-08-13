@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -45,10 +46,22 @@ class GenerationEvalCheckpoint:
             by_id = {str(item["id"]): index for index, item in enumerate(rows)}
             identifier = str(row["id"])
             if identifier in by_id:
+                previous = rows[by_id[identifier]]
                 rows[by_id[identifier]] = row
+                if previous != row:
+                    self._invalidate_metrics_unlocked(identifier)
             else:
                 rows.append(row)
             self._save_unlocked()
+
+    def _invalidate_metrics_unlocked(self, question_id: str) -> None:
+        """Discard scores derived from an answer that has been replaced."""
+
+        self.payload.setdefault("metric_progress", {}).pop(question_id, None)
+        ragas_rows = self.payload.setdefault("ragas", {}).setdefault("questions", [])
+        self.payload["ragas"]["questions"] = [
+            item for item in ragas_rows if str(item.get("id")) != question_id
+        ]
 
     def record_metric(
         self,
@@ -106,6 +119,19 @@ def latest_compatible_checkpoint(
             payload = json.loads(candidate.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if payload.get("run_signature") == signature:
+        if compatible_run_signature(payload.get("run_signature"), signature):
             return candidate
     return None
+
+
+def compatible_run_signature(stored: Any, current: Any) -> bool:
+    """Allow only a structured-parser hash migration during an explicit resume."""
+
+    if not isinstance(stored, dict) or not isinstance(current, dict):
+        return False
+    left, right = deepcopy(stored), deepcopy(current)
+    for signature in (left, right):
+        provenance = signature.get("provenance")
+        if isinstance(provenance, dict):
+            provenance.pop("structured_contract_sha256", None)
+    return left == right

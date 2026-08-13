@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import statistics
 import warnings
@@ -65,7 +66,8 @@ def _ragas_answer(row: dict[str, Any]) -> str:
 
     structured = row.get("structured_data")
     if not isinstance(structured, dict):
-        return str(row["answer"])
+        answer = str(row["answer"])
+        return _legacy_table_to_narrative(answer) or answer
     claims = structured.get("claims")
     if isinstance(claims, list):
         values = [
@@ -94,6 +96,36 @@ def _ragas_answer(row: dict[str, Any]) -> str:
         if facts:
             paragraphs.append(f"Contribution {index}. " + " ".join(facts))
     return "\n\n".join(paragraphs) or str(row["answer"])
+
+
+def _legacy_table_to_narrative(answer: str) -> str | None:
+    """Project validated legacy Markdown tables without changing stored answers."""
+
+    lines = [line.strip() for line in answer.splitlines() if line.strip()]
+    table = [line for line in lines if line.startswith("|") and line.endswith("|")]
+    if len(table) < 3:
+        return None
+    cells = [[cell.strip() for cell in line.strip("|").split("|")] for line in table]
+    headers = cells[0]
+    if not headers or any(not header for header in headers):
+        return None
+    separator = cells[1]
+    if len(separator) != len(headers) or any(
+        not value or set(value) - {"-", ":"} for value in separator
+    ):
+        return None
+    paragraphs: list[str] = []
+    for index, values in enumerate(cells[2:], 1):
+        if len(values) != len(headers):
+            return None
+        facts = [
+            f"{header.replace('_', ' ').strip().capitalize()}: {value.rstrip('.')}."
+            for header, value in zip(headers, values)
+            if value and not _is_absent_value(value)
+        ]
+        if facts:
+            paragraphs.append(f"Contribution {index}. " + " ".join(facts))
+    return "\n\n".join(paragraphs) or None
 
 
 def _as_sentence(value: str) -> str:
@@ -127,6 +159,7 @@ def evaluate_with_ragas(
             "questions": [],
         }
 
+    _install_ragas_schema_guard()
     from ragas import evaluate
     from ragas.run_config import RunConfig
 
@@ -287,11 +320,10 @@ def _build_metrics(
         ContextPrecision,
         ContextRecall,
         ContextUtilization,
-        Faithfulness,
     )
 
     factories = {
-        "faithfulness": Faithfulness,
+        "faithfulness": ChunkedFaithfulness,
         # RAGAS maps strictness to the OpenAI-compatible `n` parameter, while
         # Groq accepts only n=1.
         "answer_relevancy": lambda: AnswerRelevancy(strictness=1),
@@ -301,6 +333,155 @@ def _build_metrics(
         "answer_correctness": AnswerCorrectness,
     }
     return [factories[name]() for name in metric_names]
+
+
+def _install_ragas_schema_guard() -> None:
+    """Make RAGAS repair schema-invalid JSON and raise after repair exhaustion."""
+
+    from ragas.llms.output_parser import RagasoutputParser
+
+    if getattr(RagasoutputParser, "_project_schema_guard", False):
+        return
+
+    async def guarded_aparse(
+        self: Any,
+        result: str,
+        prompt: Any,
+        llm: Any,
+        max_retries: int = 1,
+    ) -> Any:
+        from ragas.llms.output_parser import FIX_OUTPUT_FORMAT
+
+        try:
+            payload = json.loads(_strip_json_fence(result))
+            _validate_ragas_payload(payload, self.pydantic_object)
+            return self.pydantic_object.parse_obj(payload)
+        except Exception as exc:
+            if max_retries > 0:
+                repair_prompt = FIX_OUTPUT_FORMAT.format(
+                    prompt=prompt.to_string(), completion=result
+                )
+                repaired = await llm.generate(repair_prompt)
+                return await guarded_aparse(
+                    self,
+                    repaired.generations[0][0].text,
+                    prompt,
+                    llm,
+                    max_retries - 1,
+                )
+            raise ValueError(f"RAGAS output failed schema validation: {exc}") from exc
+
+    RagasoutputParser.aparse = guarded_aparse
+    RagasoutputParser._project_schema_guard = True
+
+
+def _strip_json_fence(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```") and stripped.endswith("```"):
+        lines = stripped.splitlines()
+        if len(lines) >= 3:
+            stripped = "\n".join(lines[1:-1]).strip()
+        else:
+            stripped = stripped.strip("`").removeprefix("json").strip()
+    return stripped
+
+
+def _validate_ragas_payload(payload: Any, model: Any) -> None:
+    """Validate the top-level JSON shape and keys before Pydantic parsing."""
+
+    schema = model.schema()
+    expected_type = schema.get("type")
+    if expected_type == "array":
+        if not isinstance(payload, list):
+            raise ValueError("expected a top-level JSON array")
+        return
+    if expected_type == "object":
+        if not isinstance(payload, dict):
+            raise ValueError("expected a top-level JSON object")
+        expected = set(schema.get("properties", {}))
+        actual = set(payload)
+        if actual != expected:
+            raise ValueError(
+                f"top-level keys must be {sorted(expected)}; got {sorted(actual)}"
+            )
+        return
+    raise ValueError(f"unsupported RAGAS output schema type: {expected_type!r}")
+
+
+class ChunkedFaithfulness:
+    """Factory-compatible faithfulness metric with bounded judge output per call."""
+
+    def __new__(cls) -> Any:
+        from ragas.metrics._faithfulness import Faithfulness
+
+        metric = Faithfulness()
+        metric._ascore = _chunked_faithfulness_ascore.__get__(metric, Faithfulness)
+        return metric
+
+
+async def _chunked_faithfulness_ascore(
+    metric: Any, row: dict[str, Any], callbacks: Any
+) -> float:
+    """Split statement extraction and NLI into bounded batches."""
+
+    import numpy as np
+    from ragas.metrics._faithfulness import (
+        _faithfulness_output_parser,
+        _statements_output_parser,
+        ensembler,
+    )
+
+    assert metric.llm is not None
+    assert metric.sentence_segmenter is not None
+    sentences = [
+        sentence
+        for sentence in metric.sentence_segmenter.segment(row["answer"])
+        if sentence.strip().endswith(".")
+    ]
+    statements: list[str] = []
+    for batch in _batches(sentences, 4):
+        numbered = "\n".join(f"{index}:{value}" for index, value in enumerate(batch))
+        prompt = metric.statement_prompt.format(
+            question=row["question"], answer=" ".join(batch), sentences=numbered
+        )
+        raw = await metric.llm.generate(prompt, callbacks=callbacks)
+        parsed = await _statements_output_parser.aparse(
+            raw.generations[0][0].text, prompt, metric.llm, metric.max_retries
+        )
+        statements.extend(
+            statement
+            for item in parsed.dicts()
+            for statement in item["simpler_statements"]
+        )
+    if not statements:
+        return np.nan
+    verdicts: list[dict[str, Any]] = []
+    for batch in _batches(statements, 5):
+        prompt = metric._create_nli_prompt(row, batch)
+        raw = await metric.llm.generate(
+            prompt, callbacks=callbacks, n=metric._reproducibility
+        )
+        candidates = [
+            (
+                await _faithfulness_output_parser.aparse(
+                    raw.generations[0][index].text,
+                    prompt,
+                    metric.llm,
+                    metric.max_retries,
+                )
+            ).dicts()
+            for index in range(metric._reproducibility)
+        ]
+        verdicts.extend(
+            ensembler.from_discrete(candidates, "verdict")
+            if len(candidates) > 1
+            else candidates[0]
+        )
+    return sum(int(item["verdict"]) for item in verdicts) / len(verdicts)
+
+
+def _batches(values: Sequence[Any], size: int) -> list[list[Any]]:
+    return [list(values[index : index + size]) for index in range(0, len(values), size)]
 
 
 def _local_embedding_snapshot(model_name: str) -> str:

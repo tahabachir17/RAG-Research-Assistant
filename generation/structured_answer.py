@@ -49,7 +49,7 @@ def parse_and_render_structured_narrative(
     """Validate cited atomic claims and render them as readable Markdown."""
 
     try:
-        payload = json.loads(_strip_fence(text))
+        payload = json.loads(_normalize_provider_json(_strip_fence(text)))
     except (TypeError, json.JSONDecodeError):
         raise StructuredAnswerError(["structured_output_invalid_json"])
     if not isinstance(payload, Mapping):
@@ -156,7 +156,7 @@ def parse_and_render_structured_answer(
 ) -> tuple[str, list[dict[str, Any]]]:
     failures: list[str] = []
     try:
-        payload = json.loads(_strip_fence(text))
+        payload = json.loads(_normalize_provider_json(_strip_fence(text)))
     except (TypeError, json.JSONDecodeError):
         raise StructuredAnswerError(["structured_output_invalid_json"])
     items = payload.get("items") if isinstance(payload, Mapping) else None
@@ -253,6 +253,32 @@ def _strip_fence(text: str) -> str:
         stripped = re.sub(r"^```(?:json)?\s*", "", stripped, flags=re.IGNORECASE)
         stripped = re.sub(r"\s*```$", "", stripped)
     return stripped
+
+
+def _normalize_provider_json(text: str) -> str:
+    """Repair adjacent integer citation arrays in a rejected provider draft."""
+
+    pattern = re.compile(
+        r'("citations"\s*:\s*)\[([0-9\s,]*)\]\s*\[([0-9\s,]*)\]'
+    )
+    normalized = text
+    while pattern.search(normalized):
+        normalized = pattern.sub(
+            lambda match: (
+                f'{match.group(1)}[{_merge_integer_lists(match.group(2), match.group(3))}]'
+            ),
+            normalized,
+        )
+    return normalized
+
+
+def _merge_integer_lists(left: str, right: str) -> str:
+    values = [
+        value.strip()
+        for value in (*left.split(","), *right.split(","))
+        if value.strip()
+    ]
+    return ", ".join(dict.fromkeys(values))
 
 
 def _is_absent(text: str) -> bool:

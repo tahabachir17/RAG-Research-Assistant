@@ -22,12 +22,15 @@ class CrossEncoderReranker:
         model: Any | None = None,
         default_top_k: int = 8,
         batch_size: int | None = None,
+        max_length: int | None = None,
     ) -> None:
         if not isinstance(model_name, str) or not model_name.strip():
             raise ValueError("model_name must not be empty")
         _positive(default_top_k, "default_top_k")
         if batch_size is not None:
             _positive(batch_size, "batch_size")
+        if max_length is not None:
+            _positive(max_length, "max_length")
         if model is None:
             try:
                 from sentence_transformers import CrossEncoder
@@ -35,11 +38,16 @@ class CrossEncoderReranker:
                 raise ImportError(
                     "sentence-transformers is required to construct the reranker"
                 ) from exc
-            model = CrossEncoder(model_name)
+            options = {"max_length": max_length} if max_length is not None else {}
+            model = CrossEncoder(model_name, **options)
         if not callable(getattr(model, "predict", None)):
             raise TypeError("model must provide a predict method")
         self.model_name, self.model = model_name.strip(), model
-        self.default_top_k, self.batch_size = default_top_k, batch_size
+        self.default_top_k, self.batch_size, self.max_length = (
+            default_top_k,
+            batch_size,
+            max_length,
+        )
 
     def rerank(
         self,

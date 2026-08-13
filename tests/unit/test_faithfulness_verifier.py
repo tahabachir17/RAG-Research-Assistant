@@ -74,3 +74,11 @@ def test_faithfulness_verifier_rejects_incomplete_verdict_coverage():
 
     assert flags[0].status == "unverified"
     assert flags[0].reason == "Verifier failed: ValueError"
+
+
+def test_faithfulness_verifier_skips_empty_context_and_answer():
+    context = AssembledContext("", {})
+    client = _VerifierClient(RuntimeError("must not be called"))
+
+    assert FaithfulnessVerifier(client).verify(context, "") == []
+    assert client.calls == []

@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     LLM_REQUEST_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0.0, le=120.0)
     LLM_TRANSPORT_MAX_RETRIES: int = Field(default=0, ge=0, le=2)
     GENERATION_MAX_RETRIES: int = Field(default=1, ge=0, le=1)
-    ENABLE_FAITHFULNESS_VERIFIER: bool = False
+    ENABLE_FAITHFULNESS_VERIFIER: bool = True
     FAITHFULNESS_VERIFIER_PROVIDER: str = "groq"
     FAITHFULNESS_VERIFIER_MODEL: str = "llama-3.1-8b-instant"
     FAITHFULNESS_VERIFIER_MAX_TOKENS: int = Field(default=512, gt=0)
@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     LMSTUDIO_MODEL: str = "qwen/qwen3-4b-2507"
     JUDGE_PROVIDER: str = "groq"
     JUDGE_MODEL: str = "llama-3.3-70b-versatile"
-    JUDGE_MAX_TOKENS: int = Field(default=1024, gt=0)
+    JUDGE_MAX_TOKENS: int = Field(default=2048, gt=0)
     JUDGE_TEMPERATURE: float = Field(default=0.0, ge=0.0, le=2.0)
     RAGAS_JUDGE_PROVIDER: str = "gemini"
     RAGAS_JUDGE_MODEL: str = "gemini-3.5-flash-lite"
@@ -50,6 +50,7 @@ class Settings(BaseSettings):
     QDRANT_HOST: str = "localhost"
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION: str = "ai_papers"
+    QDRANT_PATH: str = "data/qdrant"
     DENSE_TOP_K: int = 50
     SPARSE_TOP_K: int = 50
     HYBRID_TOP_K: int = 20

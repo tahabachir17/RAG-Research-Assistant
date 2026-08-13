@@ -111,3 +111,17 @@ def test_structured_narrative_rejects_overcitation_outside_context():
     raw = '{"answer_status":"answered","summary":"","claims":[{"text":"Claim.","citations":[9]}]}'
     with pytest.raises(StructuredAnswerError, match="structured_citation_out_of_range"):
         parse_and_render_structured_narrative(raw, valid_citations={1})
+
+
+def test_structured_answer_repairs_adjacent_provider_citation_arrays():
+    raw = (
+        '{"items":[{"evaluation":{"text":"Two benchmarks","citations":'
+        '[1][3]}}]}'
+    )
+    rendered, structured = parse_and_render_structured_answer(
+        raw,
+        required_fields=["evaluation"],
+        valid_citations={1, 3},
+    )
+    assert "Two benchmarks [1][3]" in rendered
+    assert structured["items"][0]["evaluation"]["citations"] == [1, 3]

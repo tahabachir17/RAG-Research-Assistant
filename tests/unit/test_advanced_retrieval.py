@@ -56,6 +56,26 @@ def test_cross_encoder_reranker_scores_pairs_and_preserves_payload():
     assert candidates[0].source == "test"
 
 
+def test_cross_encoder_reranker_passes_max_length_only_at_model_construction(monkeypatch):
+    captured = {}
+
+    class Model:
+        def predict(self, pairs, **kwargs):
+            return np.asarray([0.5] * len(pairs))
+
+    class Factory:
+        def __new__(cls, model_name, **kwargs):
+            captured.update(model_name=model_name, **kwargs)
+            return Model()
+
+    import sentence_transformers
+
+    monkeypatch.setattr(sentence_transformers, "CrossEncoder", Factory)
+    reranker = CrossEncoderReranker("local-model", max_length=128)
+    assert captured == {"model_name": "local-model", "max_length": 128}
+    assert reranker.max_length == 128
+
+
 class _Embedder:
     def encode_texts(self, texts):
         assert len(texts) == 4

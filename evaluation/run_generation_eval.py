@@ -25,6 +25,7 @@ from retrieval.models import RetrievalResult
 
 from .generation_eval_checkpoint import (
     GenerationEvalCheckpoint,
+    compatible_run_signature,
     latest_compatible_checkpoint,
 )
 from .generation_evaluator import (
@@ -121,6 +122,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
     questions = all_questions[: args.limit] if args.limit is not None else all_questions
     index = BM25Indexer.load(args.bm25_index)
+    questions = _with_live_external_retrieval(
+        questions, index, args.chunk_count or args.external_retrieval_top_k
+    )
     if args.chunk_count is not None:
         questions = _with_chunk_count(questions, index, args.chunk_count)
     lookup = FrozenChunkLookup(index=index)
@@ -210,7 +214,9 @@ class FrozenChunkLookup:
     def __call__(self, chunk_ids: list[str]) -> list[RetrievalResult]:
         missing = [chunk_id for chunk_id in chunk_ids if chunk_id not in self._chunks]
         if missing:
-            raise KeyError(f"Frozen chunks are missing from the BM25 artifact: {missing}")
+            raise KeyError(
+                f"Frozen chunks are missing from the BM25 artifact: {missing}"
+            )
         return [
             RetrievalResult.from_payload(
                 self._chunks[chunk_id], score=0.0, source="frozen"
@@ -233,11 +239,16 @@ def _run_generation_stage(
     }
     pending = [question for question in questions if question.id not in completed]
     LOGGER.info(
-        "Generation: %d complete, %d pending", len(questions) - len(pending), len(pending)
+        "Generation: %d complete, %d pending",
+        len(questions) - len(pending),
+        len(pending),
     )
     failures = checkpoint.payload.setdefault("errors", [])
     with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {pool.submit(evaluator.evaluate_one, question): question for question in pending}
+        futures = {
+            pool.submit(evaluator.evaluate_one, question): question
+            for question in pending
+        }
         for future in as_completed(futures):
             question = futures[future]
             try:
@@ -279,6 +290,18 @@ def _run_ragas_stage(
         )
         for metric in DEFAULT_METRIC_NAMES:
             if checkpoint.metric_completed(question.id, metric):
+                continue
+            context_metric_unavailable = metric in {
+                "context_precision",
+                "context_recall",
+            } and (not question.reviewed or not question.reference_context_ids)
+            if context_metric_unavailable:
+                checkpoint.record_metric(
+                    question.id,
+                    metric,
+                    status="unavailable",
+                    reason="gold evidence is not confidently aligned to project chunks",
+                )
                 continue
             if metric in REFERENCE_METRIC_NAMES and not question.reference_answer:
                 checkpoint.record_metric(
@@ -385,8 +408,7 @@ def _finalize_ragas(
         ]
         aggregate[metric] = sum(values) / len(values) if values else None
     terminal = sum(
-        progress.get(str(row.get("id")), {}).get(metric)
-        in {"completed", "unavailable"}
+        progress.get(str(row.get("id")), {}).get(metric) in {"completed", "unavailable"}
         for row in rows
         for metric in DEFAULT_METRIC_NAMES
     )
@@ -402,7 +424,11 @@ def _finalize_ragas(
             "reason": (
                 f"{unavailable} reference-dependent values unavailable from the dataset"
                 if terminal == expected and unavailable
-                else None if terminal == expected else f"{expected - terminal} metric values incomplete"
+                else (
+                    None
+                    if terminal == expected
+                    else f"{expected - terminal} metric values incomplete"
+                )
             ),
             "metrics": list(DEFAULT_METRIC_NAMES),
             "aggregate": aggregate,
@@ -425,11 +451,34 @@ def _open_checkpoint(
     if args.resume and resume_path is None:
         resume_path = latest_compatible_checkpoint(args.output_dir, signature)
         if resume_path is None:
-            raise ValueError("--resume found no compatible generation evaluation checkpoint")
+            raise ValueError(
+                "--resume found no compatible generation evaluation checkpoint"
+            )
     if resume_path is not None:
         checkpoint = GenerationEvalCheckpoint.load(resume_path)
-        if checkpoint.payload.get("run_signature") != signature:
-            raise ValueError("resume checkpoint does not match dataset/provider/run settings")
+        stored_signature = checkpoint.payload.get("run_signature")
+        if not compatible_run_signature(stored_signature, signature):
+            raise ValueError(
+                "resume checkpoint does not match dataset/provider/run settings"
+            )
+        if stored_signature != signature:
+            old_hash = (
+                (stored_signature or {})
+                .get("provenance", {})
+                .get("structured_contract_sha256")
+            )
+            new_hash = signature["provenance"].get("structured_contract_sha256")
+            checkpoint.payload.setdefault("resume_migrations", []).append(
+                {
+                    "at": datetime.now(timezone.utc).isoformat(),
+                    "reason": "structured parser compatibility fix",
+                    "old_structured_contract_sha256": old_hash,
+                    "new_structured_contract_sha256": new_hash,
+                }
+            )
+            checkpoint.payload["run_signature"] = signature
+            checkpoint.payload["provenance"] = signature["provenance"]
+            checkpoint.save()
         LOGGER.info("Resuming %s", checkpoint.path)
         return checkpoint
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -457,7 +506,9 @@ def _open_checkpoint(
 
 def _build_judge(settings: Settings, args: argparse.Namespace) -> LLMJudge:
     client_provider = (
-        "lmstudio" if settings.JUDGE_PROVIDER.strip().casefold() == "qwen" else settings.JUDGE_PROVIDER
+        "lmstudio"
+        if settings.JUDGE_PROVIDER.strip().casefold() == "qwen"
+        else settings.JUDGE_PROVIDER
     )
     judge_settings = settings.model_copy(
         update={
@@ -509,9 +560,31 @@ def _with_chunk_count(
                 if len(selected) >= count:
                     break
         if len(selected) < count:
-            raise ValueError(f"{question.id}: only {len(selected)} same-paper chunks available")
+            raise ValueError(
+                f"{question.id}: only {len(selected)} same-paper chunks available"
+            )
         configured.append(replace(question, retrieved_chunk_ids=selected[:count]))
     return configured
+
+
+def _with_live_external_retrieval(
+    questions: list[GenerationGoldenQuestion], index: BM25Indexer, count: int
+) -> list[GenerationGoldenQuestion]:
+    """Populate external benchmark contexts through the evaluated BM25 pipeline."""
+
+    populated: list[GenerationGoldenQuestion] = []
+    for question in questions:
+        if question.retrieved_chunk_ids or not question.source_dataset:
+            populated.append(question)
+            continue
+        results = index.search(question.question, top_k=count)
+        chunk_ids = [
+            str(row.get("chunk_id", "")) for row in results if row.get("chunk_id")
+        ]
+        if not chunk_ids:
+            raise ValueError(f"{question.id}: retrieval produced no chunks")
+        populated.append(replace(question, retrieved_chunk_ids=chunk_ids))
+    return populated
 
 
 def _same_paper(candidate: str, expected: str) -> bool:
@@ -566,19 +639,22 @@ def _run_signature(
         "judge_provider": settings.JUDGE_PROVIDER,
         "judge_model": settings.JUDGE_MODEL,
         "chunk_count": args.chunk_count,
+        "external_retrieval_top_k": args.external_retrieval_top_k,
         "max_context_tokens": args.max_context_tokens,
         "question_ids": [question.id for question in questions],
         "semantic_judge_enabled": not args.no_llm_judge,
         "ragas_enabled": not args.no_ragas,
         "provenance": {
-            "evaluation_schema_version": 4,
+            "evaluation_schema_version": 5,
             "dataset_path": str(args.dataset),
             "dataset_sha256": _sha256(args.dataset),
             "bm25_index_path": str(args.bm25_index),
             "prompt_path": "config/prompts/qa_prompt.yaml",
             "prompt_sha256": _sha256(Path("config/prompts/qa_prompt.yaml")),
             "structured_contract_path": "generation/structured_answer.py",
-            "structured_contract_sha256": _sha256(Path("generation/structured_answer.py")),
+            "structured_contract_sha256": _sha256(
+                Path("generation/structured_answer.py")
+            ),
             "max_context_tokens": args.max_context_tokens,
             "max_output_tokens": settings.LLM_MAX_TOKENS,
         },
@@ -607,7 +683,9 @@ def _check_lmstudio(settings: Settings, model: str) -> None:
             f"{settings.LMSTUDIO_BASE_URL}."
         ) from exc
     available = {
-        str(item.get("id")) for item in payload.get("data", []) if isinstance(item, dict)
+        str(item.get("id"))
+        for item in payload.get("data", [])
+        if isinstance(item, dict)
     }
     if available and model not in available:
         raise RuntimeError(
@@ -625,8 +703,12 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("evaluation/data/golden_generation_qa.json"),
     )
-    parser.add_argument("--bm25-index", type=Path, default=Path("data/processed/bm25_index.pkl"))
-    parser.add_argument("--output-dir", type=Path, default=Path("evaluation/data/eval_results"))
+    parser.add_argument(
+        "--bm25-index", type=Path, default=Path("data/processed/bm25_index.pkl")
+    )
+    parser.add_argument(
+        "--output-dir", type=Path, default=Path("evaluation/data/eval_results")
+    )
     parser.add_argument(
         "--generator-provider",
         "--provider",
@@ -640,6 +722,7 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--judge-model")
     parser.add_argument("--chunk-count", "--top-k", dest="chunk_count", type=int)
+    parser.add_argument("--external-retrieval-top-k", type=int, default=4)
     parser.add_argument("--resume", action="store_true")
     parser.add_argument("--resume-from", type=Path)
     parser.add_argument("--workers", type=int, default=1, choices=range(1, 33))
@@ -663,12 +746,16 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--ragas-max-retries", type=int, default=1, choices=range(0, 6))
     # Backward-compatible aliases from the one-off runner.
     parser.add_argument("--ragas-workers", type=int, help=argparse.SUPPRESS)
-    parser.add_argument("--ragas-requests-per-second", type=float, help=argparse.SUPPRESS)
+    parser.add_argument(
+        "--ragas-requests-per-second", type=float, help=argparse.SUPPRESS
+    )
     parser.add_argument("--rate-limit-retries", type=int, help=argparse.SUPPRESS)
     parser.add_argument("--rate-limit-default-wait", type=float, help=argparse.SUPPRESS)
     parser.add_argument("--require-reviewed", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
-    parser.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
+    parser.add_argument(
+        "--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO"
+    )
     return parser
 
 
@@ -684,8 +771,10 @@ def _resolve_generation_target(
         model = requested_model.strip()
     elif requested_provider:
         configured = settings.LLM_PROVIDER.strip().casefold()
-        model = settings.LLM_MODEL if provider == configured else (
-            settings.GROQ_MODEL if provider == "groq" else settings.GEMINI_MODEL
+        model = (
+            settings.LLM_MODEL
+            if provider == configured
+            else (settings.GROQ_MODEL if provider == "groq" else settings.GEMINI_MODEL)
         )
     else:
         model = settings.LLM_MODEL.strip()
@@ -706,11 +795,15 @@ def _resolve_evaluation_target(
         model = requested_model.strip()
     elif requested_provider:
         configured = settings.JUDGE_PROVIDER.strip().casefold()
-        model = settings.JUDGE_MODEL if provider == configured else {
-            "groq": settings.GROQ_MODEL,
-            "gemini": settings.GEMINI_MODEL,
-            "qwen": settings.LMSTUDIO_MODEL,
-        }[provider]
+        model = (
+            settings.JUDGE_MODEL
+            if provider == configured
+            else {
+                "groq": settings.GROQ_MODEL,
+                "gemini": settings.GEMINI_MODEL,
+                "qwen": settings.LMSTUDIO_MODEL,
+            }[provider]
+        )
     else:
         model = settings.JUDGE_MODEL.strip()
     if not model:
@@ -726,23 +819,38 @@ def _validate_credentials(
         required.add(settings.JUDGE_PROVIDER.strip().casefold())
     if "groq" in required and not settings.GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY is required by the resolved provider matrix")
-    if "gemini" in required and not (settings.GEMINI_API_KEY or settings.OPENAI_API_KEY):
+    if "gemini" in required and not (
+        settings.GEMINI_API_KEY or settings.OPENAI_API_KEY
+    ):
         raise ValueError("GEMINI_API_KEY or OPENAI_API_KEY is required")
 
 
 def _evaluation_exit_code(
     result: dict[str, Any], *, judge_required: bool, ragas_required: bool
 ) -> int:
-    requested = int(result.get("coverage", {}).get("requested", result.get("aggregate", {}).get("questions", 0)))
+    requested = int(
+        result.get("coverage", {}).get(
+            "requested", result.get("aggregate", {}).get("questions", 0)
+        )
+    )
     if result.get("aggregate", {}).get("questions", 0) != requested:
-        print("Evaluation artifacts were saved, but generation is incomplete.", file=sys.stderr)
+        print(
+            "Evaluation artifacts were saved, but generation is incomplete.",
+            file=sys.stderr,
+        )
         return 2
     if judge_required and result.get("aggregate", {}).get("judge_coverage") != 1.0:
-        print("Evaluation artifacts were saved, but the semantic judge is incomplete.", file=sys.stderr)
+        print(
+            "Evaluation artifacts were saved, but the semantic judge is incomplete.",
+            file=sys.stderr,
+        )
         return 2
     if ragas_required and result.get("ragas", {}).get("status") != "completed":
         reason = result.get("ragas", {}).get("reason", "unknown RAGAS failure")
-        print(f"Evaluation artifacts were saved, but RAGAS is incomplete: {reason}", file=sys.stderr)
+        print(
+            f"Evaluation artifacts were saved, but RAGAS is incomplete: {reason}",
+            file=sys.stderr,
+        )
         return 2
     return 0
 

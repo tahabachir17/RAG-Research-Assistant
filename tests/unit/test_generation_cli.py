@@ -15,6 +15,7 @@ from generation.cli import (
     retrieve_ranked_results,
     prioritize_explicit_rag_evidence,
     run_generation,
+    _parser,
 )
 from retrieval.models import RetrievalResult
 
@@ -26,6 +27,13 @@ def test_offline_generation_harness_returns_resolved_source():
     assert response.sources[0]["paper_id"] == "1706.03762"
     assert response.sources[0]["chunk_id"] == "demo-transformer-method"
     assert response.answer == "The supplied context describes scaled dot-product attention. [1]"
+
+
+def test_cli_defaults_to_hybrid_retrieval():
+    args = _parser().parse_args([])
+    assert args.retrieval_config == "hybrid"
+    assert args.qdrant_path.as_posix() == "data/qdrant"
+    assert args.qdrant_collection == "ai_papers"
 
 
 def test_generation_appends_optional_verifier_flags_to_response():
@@ -101,6 +109,7 @@ def test_harness_retrieves_new_question_from_local_index(monkeypatch, tmp_path):
         tmp_path / "bm25.pkl",
         top_k=3,
         expand_evidence_queries=False,
+        retriever=FakeSparseRetriever(tmp_path / "bm25.pkl", 3),
     )
     assert results == [expected]
 
@@ -131,6 +140,7 @@ def test_retrieval_reranks_candidates_before_diversification(monkeypatch, tmp_pa
         candidate_k=2,
         reranker=FakeReranker(),
         expand_evidence_queries=False,
+        retriever=FakeSparseRetriever(tmp_path / "bm25.pkl", 2),
     )
     assert results == [second, first]
 
@@ -175,6 +185,7 @@ def test_expanded_retrieval_bounds_candidates_before_reranking(monkeypatch, tmp_
         candidate_k=2,
         reranker=FakeReranker(),
         expand_evidence_queries=True,
+        retriever=FakeSparseRetriever(tmp_path / "bm25.pkl", 2),
     )
     assert calls == 4
     assert len(results) == 2
@@ -328,6 +339,9 @@ def test_main_runs_retrieval_generation_and_evidence(monkeypatch, capsys):
     monkeypatch.setattr(
         "generation.cli.retrieve_ranked_results",
         lambda question, index_path, **kwargs: [result],
+    )
+    monkeypatch.setattr(
+        "generation.cli.build_application_retriever", lambda *args, **kwargs: object()
     )
     monkeypatch.setattr("generation.cli._live_client", lambda args: FakeLiveClient())
 

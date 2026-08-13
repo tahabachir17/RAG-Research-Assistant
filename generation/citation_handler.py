@@ -283,6 +283,21 @@ def _content_tokens(text: str) -> set[str]:
     }
 
 
+def content_tokens(text: str) -> set[str]:
+    """Return the normalized content-token set used by citation validation."""
+
+    return _content_tokens(text)
+
+
+def lexical_overlap_score(subject: str, evidence: str) -> float:
+    """Score how much of ``subject`` is covered by ``evidence`` lexical content."""
+
+    subject_tokens = _content_tokens(subject)
+    if not subject_tokens:
+        return 0.0
+    return len(subject_tokens & _content_tokens(evidence)) / len(subject_tokens)
+
+
 def _is_absent(text: str) -> bool:
     normalized = " ".join(text.casefold().split())
     return normalized.startswith("not reported") or normalized.startswith("not provided")

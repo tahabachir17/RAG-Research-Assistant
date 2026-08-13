@@ -40,6 +40,7 @@ try:
     from config.settings import Settings
     from retrieval.models import RetrievalResult
     from retrieval.reranker import CrossEncoderReranker
+    from retrieval.retriever_factory import build_retriever
     from retrieval.sparse_retriever import SparseRetriever
 except ImportError:
     import sys
@@ -50,6 +51,7 @@ except ImportError:
     from config.settings import Settings
     from retrieval.models import RetrievalResult
     from retrieval.reranker import CrossEncoderReranker
+    from retrieval.retriever_factory import build_retriever
     from retrieval.sparse_retriever import SparseRetriever
 
 try:
@@ -426,14 +428,17 @@ def retrieve_ranked_results(
     excluded_sections: Collection[str] = DEFAULT_EXCLUDED_SECTIONS,
     reranker: Any | None = None,
     expand_evidence_queries: bool = False,
+    retriever: Any | None = None,
 ) -> list[RetrievalResult]:
-    """Search broadly, then select diverse evidence from the local BM25 corpus."""
+    """Search broadly with hybrid retrieval, then select diverse evidence."""
 
     _positive_integer(top_k, "top_k")
     candidate_limit = top_k if candidate_k is None else candidate_k
     _positive_integer(candidate_limit, "candidate_k")
     candidate_limit = max(top_k, candidate_limit)
-    retriever = SparseRetriever(index_path, default_top_k=candidate_limit)
+    retriever = retriever or build_application_retriever(
+        index_path, default_top_k=candidate_limit
+    )
     queries = (
         build_evidence_queries(question) if expand_evidence_queries else [question]
     )
@@ -457,6 +462,67 @@ def retrieve_ranked_results(
     if not results:
         raise ValueError("No retrieval results were found for the supplied question")
     return results
+
+
+def build_application_retriever(
+    index_path: str | Path,
+    *,
+    default_top_k: int,
+    retrieval_config: str = "hybrid",
+    qdrant_path: str | Path | None = None,
+    collection_name: str | None = None,
+    embedding_model: str | None = None,
+) -> Any:
+    """Build the normal BM25 + Qdrant retriever; sparse is diagnostic-only."""
+
+    if retrieval_config == "sparse":
+        return SparseRetriever(index_path, default_top_k=default_top_k)
+    if retrieval_config != "hybrid":
+        raise ValueError("retrieval_config must be 'hybrid' or 'sparse'")
+    from processing.embedder import Embedder
+    from qdrant_client import QdrantClient
+
+    settings = Settings()
+    client = QdrantClient(path=str(qdrant_path or settings.QDRANT_PATH))
+    return build_retriever(
+        {
+            "type": "hybrid",
+            "dense": {
+                "collection_name": collection_name or settings.QDRANT_COLLECTION,
+                "default_top_k": default_top_k,
+            },
+            "sparse": {
+                "index_path": index_path,
+                "default_top_k": default_top_k,
+            },
+            "default_top_k": default_top_k,
+            "candidate_top_k": default_top_k,
+        },
+        qdrant_client=client,
+        embedder=Embedder(_local_embedding_model(embedding_model or settings.EMBEDDING_MODEL)),
+    )
+
+
+def _local_embedding_model(model_name: str) -> str:
+    normalized = (
+        model_name
+        if "/" in model_name
+        else f"sentence-transformers/{model_name}"
+    )
+    snapshots = (
+        Path("data/model_cache/hub")
+        / f"models--{normalized.replace('/', '--')}"
+        / "snapshots"
+    )
+    if snapshots.is_dir():
+        complete = sorted(
+            path
+            for path in snapshots.iterdir()
+            if path.is_dir() and (path / "config.json").is_file()
+        )
+        if complete:
+            return str(complete[-1])
+    return normalized
 
 
 def build_local_reranker(model_path: str | Path | None = None) -> CrossEncoderReranker:
@@ -542,6 +608,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.rerank and not args.retrieve:
         parser.error("--rerank requires --retrieve")
     if args.retrieve:
+        retriever = build_application_retriever(
+            args.index_path,
+            default_top_k=args.candidate_k,
+            retrieval_config=args.retrieval_config,
+            qdrant_path=args.qdrant_path,
+            collection_name=args.qdrant_collection,
+            embedding_model=args.embedding_model,
+        )
         results = retrieve_ranked_results(
             args.question,
             args.index_path,
@@ -558,6 +632,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 build_local_reranker(args.reranker_model) if args.rerank else None
             ),
             expand_evidence_queries=args.evidence_query_expansion,
+            retriever=retriever,
         )
     else:
         results = load_ranked_results(
@@ -670,6 +745,15 @@ def _parser() -> argparse.ArgumentParser:
         / "bm25_index.pkl",
         help="Trusted BM25 artifact used by --retrieve",
     )
+    parser.add_argument(
+        "--retrieval-config",
+        choices=("hybrid", "sparse"),
+        default="hybrid",
+        help="Hybrid BM25 + Qdrant is the normal path; sparse is diagnostic-only",
+    )
+    parser.add_argument("--qdrant-path", type=Path, default=Path("data/qdrant"))
+    parser.add_argument("--qdrant-collection", default="ai_papers")
+    parser.add_argument("--embedding-model", default="all-MiniLM-L6-v2")
     parser.add_argument(
         "--top-k",
         type=int,

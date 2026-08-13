@@ -1,9 +1,18 @@
 from __future__ import annotations
 
+import asyncio
+from types import SimpleNamespace
+
+import pytest
+from langchain_core.pydantic_v1 import BaseModel
+
 from config import Settings
 from evaluation.ragas_evaluator import (
+    _batches,
     _build_metrics,
+    _install_ragas_schema_guard,
     _ragas_llm_options,
+    _validate_ragas_payload,
     build_ragas_records,
 )
 from retrieval.models import RetrievalResult
@@ -116,6 +125,33 @@ def test_ragas_projects_structured_table_to_factual_narrative():
     assert records[0]["answer"] == "Contribution 1. Method: Scales adapter outputs."
 
 
+def test_ragas_projects_legacy_markdown_table_to_factual_narrative():
+    generation = {
+        "questions": [
+            {
+                "id": "q1",
+                "question": "Question?",
+                "answer": (
+                    "| problem | method | limitations |\n"
+                    "| --- | --- | --- |\n"
+                    "| Gradient instability [1] | Scaling [1] | "
+                    "Not reported in the supplied passages. |"
+                ),
+                "structured_data": None,
+            }
+        ]
+    }
+    records = build_ragas_records(
+        generation,
+        context_lookup=lambda ids: [RetrievalResult("c1", "Seen", 1.0, "frozen")],
+        chunk_ids_by_question={"q1": ["c1"]},
+    )
+
+    assert records[0]["answer"] == (
+        "Contribution 1. Problem: Gradient instability [1]. Method: Scaling [1]."
+    )
+
+
 def test_ragas_qwen_uses_local_lmstudio_endpoint():
     settings = Settings(
         _env_file=None,
@@ -142,3 +178,73 @@ def test_ragas_gemini_preserves_existing_openai_key_fallback():
     assert options["api_key"] == "existing-gemini-key"
     assert options["base_url"] == settings.GEMINI_BASE_URL
     assert "temperature" not in options
+
+
+class _AnswerSchema(BaseModel):
+    question: str
+    noncommittal: int
+
+
+def test_ragas_schema_guard_rejects_valid_json_with_wrong_top_level_keys():
+    with pytest.raises(ValueError, match="top-level keys"):
+        _validate_ragas_payload(
+            {"analysis": [{"question": "Q", "noncommittal": 0}]},
+            _AnswerSchema,
+        )
+
+
+def test_ragas_schema_guard_repairs_schema_invalid_json_once():
+    from ragas.llms.output_parser import RagasoutputParser
+
+    _install_ragas_schema_guard()
+    parser = RagasoutputParser(pydantic_object=_AnswerSchema)
+
+    class LLM:
+        calls = 0
+
+        async def generate(self, prompt):
+            self.calls += 1
+            return SimpleNamespace(
+                generations=[
+                    [SimpleNamespace(text='{"question":"Repaired?","noncommittal":0}')]
+                ]
+            )
+
+    llm = LLM()
+    prompt = SimpleNamespace(to_string=lambda: "original prompt")
+    parsed = asyncio.run(
+        parser.aparse(
+            '{"analysis":[{"question":"Wrong","noncommittal":0}]}',
+            prompt,
+            llm,
+            max_retries=1,
+        )
+    )
+    assert parsed.question == "Repaired?"
+    assert llm.calls == 1
+
+
+def test_ragas_schema_guard_raises_after_repair_exhaustion():
+    from ragas.llms.output_parser import RagasoutputParser
+
+    _install_ragas_schema_guard()
+    parser = RagasoutputParser(pydantic_object=_AnswerSchema)
+    prompt = SimpleNamespace(to_string=lambda: "original prompt")
+
+    with pytest.raises(ValueError, match="schema validation"):
+        asyncio.run(
+            parser.aparse(
+                '{"analysis":[]}',
+                prompt,
+                SimpleNamespace(),
+                max_retries=0,
+            )
+        )
+
+
+def test_faithfulness_batches_bound_per_call_output_size():
+    assert _batches(list(range(11)), 4) == [
+        [0, 1, 2, 3],
+        [4, 5, 6, 7],
+        [8, 9, 10],
+    ]

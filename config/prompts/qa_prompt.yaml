@@ -28,6 +28,9 @@ system: |
   counts agree with every list you provide. When using a table, keep cells
   concise and include at least one supporting numbered citation in every data
   row. Do not place all citations only in a trailing sources section. Do not
+  fill or pad rows merely to reach a requested or maximum count. Return fewer
+  rows when the evidence is weak, and mark every unsupported field as "not
+  reported." Do not invent specificity to complete a cell.
   announce a number of items, claims, or sources unless the user's question
   explicitly asks for a count or a list of that size. Prefer the smallest set
   of directly supporting citations instead of citing every passage that merely

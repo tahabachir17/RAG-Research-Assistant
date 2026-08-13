@@ -19,6 +19,8 @@ try:
     from .generation_golden import GenerationGoldenQuestion
     from .generation_metrics import (
         claim_level_citation_coverage,
+        direct_context_precision,
+        direct_context_recall,
         qualifying_item_precision,
         qualifying_item_recall,
         required_field_completeness,
@@ -30,7 +32,16 @@ except ImportError:
     from generation.cli import run_generation
     from retrieval.models import RetrievalResult
     from generation_golden import GenerationGoldenQuestion
-    from generation_metrics import claim_level_citation_coverage, qualifying_item_precision, qualifying_item_recall, required_field_completeness, truncation_rate, unsupported_claim_rate
+    from generation_metrics import (
+        claim_level_citation_coverage,
+        direct_context_precision,
+        direct_context_recall,
+        qualifying_item_precision,
+        qualifying_item_recall,
+        required_field_completeness,
+        truncation_rate,
+        unsupported_claim_rate,
+    )
     from llm_judge import LLMJudge
 
 
@@ -71,7 +82,9 @@ class GenerationEvaluator:
     def _evaluate_one(self, question: GenerationGoldenQuestion) -> dict[str, Any]:
         chunks = self.chunk_lookup(question.retrieved_chunk_ids)
         if [chunk.chunk_id for chunk in chunks] != question.retrieved_chunk_ids:
-            raise ValueError(f"{question.id}: chunk lookup must preserve every frozen chunk id in order")
+            raise ValueError(
+                f"{question.id}: chunk lookup must preserve every frozen chunk id in order"
+            )
         generated = run_generation(
             question.question,
             chunks,
@@ -82,11 +95,28 @@ class GenerationEvaluator:
             max_context_tokens=self.max_context_tokens,
         )
         claims = _claims(generated.answer, generated.structured_data)
-        missing = {failure.split(":", 1)[1] for failure in generated.validation_failures or [] if failure.startswith("missing_required_field:")}
-        present_fields = [field for field in question.required_fields if field not in missing]
-        candidates = list(dict.fromkeys(question.expected_qualifying_items + list(question.excluded_items)))
-        predicted = [item for item in candidates if re.search(rf"\b{re.escape(item)}\b", generated.answer, re.IGNORECASE)]
-        evidence = [{"citation_number": index, "chunk_id": chunk.chunk_id, "text": chunk.text} for index, chunk in enumerate(chunks, 1)]
+        missing = {
+            failure.split(":", 1)[1]
+            for failure in generated.validation_failures or []
+            if failure.startswith("missing_required_field:")
+        }
+        present_fields = [
+            field for field in question.required_fields if field not in missing
+        ]
+        candidates = list(
+            dict.fromkeys(
+                question.expected_qualifying_items + list(question.excluded_items)
+            )
+        )
+        predicted = [
+            item
+            for item in candidates
+            if re.search(rf"\b{re.escape(item)}\b", generated.answer, re.IGNORECASE)
+        ]
+        evidence = [
+            {"citation_number": index, "chunk_id": chunk.chunk_id, "text": chunk.text}
+            for index, chunk in enumerate(chunks, 1)
+        ]
         subjects = [
             {
                 "subject_id": claim.get("subject_id", f"claim-{index}"),
@@ -97,16 +127,59 @@ class GenerationEvaluator:
             }
             for index, claim in enumerate(claims, 1)
         ]
-        subjects.extend({"subject_id": f"item-{index}", "check": "item_qualification", "text": item} for index, item in enumerate(predicted, 1))
-        judged = self.judge.judge(question_id=question.id, question=question.question, answer=generated.answer, evidence=evidence, subjects=subjects, exclusion_criteria=question.excluded_items) if self.judge else None
-        item_by_subject = {f"item-{index}": item for index, item in enumerate(predicted, 1)}
-        judged_items = [item_by_subject[verdict.subject_id] for verdict in judged.verdicts if verdict.check == "item_qualification" and verdict.verdict in {"supported", "partially_supported"} and verdict.subject_id in item_by_subject] if judged and judged.judge_status == "judged" else None
+        subjects.extend(
+            {"subject_id": f"item-{index}", "check": "item_qualification", "text": item}
+            for index, item in enumerate(predicted, 1)
+        )
+        judged = (
+            self.judge.judge(
+                question_id=question.id,
+                question=question.question,
+                answer=generated.answer,
+                evidence=evidence,
+                subjects=subjects,
+                exclusion_criteria=question.excluded_items,
+            )
+            if self.judge
+            else None
+        )
+        item_by_subject = {
+            f"item-{index}": item for index, item in enumerate(predicted, 1)
+        }
+        judged_items = (
+            [
+                item_by_subject[verdict.subject_id]
+                for verdict in judged.verdicts
+                if verdict.check == "item_qualification"
+                and verdict.verdict in {"supported", "partially_supported"}
+                and verdict.subject_id in item_by_subject
+            ]
+            if judged and judged.judge_status == "judged"
+            else None
+        )
         calibration = None
         if judged and judged.judge_status == "judged" and question.calibration_verdicts:
-            actual = {verdict.subject_id: verdict.verdict for verdict in judged.verdicts}
-            pairs = [(str(item.get("verdict", "")), actual.get(str(item.get("subject_id", "")))) for item in question.calibration_verdicts]
-            comparable = [(human, judge_label) for human, judge_label in pairs if judge_label is not None]
-            calibration = sum(human == judge_label for human, judge_label in comparable) / len(comparable) if comparable else None
+            actual = {
+                verdict.subject_id: verdict.verdict for verdict in judged.verdicts
+            }
+            pairs = [
+                (
+                    str(item.get("verdict", "")),
+                    actual.get(str(item.get("subject_id", ""))),
+                )
+                for item in question.calibration_verdicts
+            ]
+            comparable = [
+                (human, judge_label)
+                for human, judge_label in pairs
+                if judge_label is not None
+            ]
+            calibration = (
+                sum(human == judge_label for human, judge_label in comparable)
+                / len(comparable)
+                if comparable
+                else None
+            )
         failures = generated.validation_failures or []
         return {
             "id": question.id,
@@ -114,6 +187,23 @@ class GenerationEvaluator:
             "title": question.title,
             "question": question.question,
             "reviewed": question.reviewed,
+            "source_dataset": question.source_dataset,
+            "source_tier": question.source_dataset or "manual",
+            "alignment_status": question.alignment_status or (
+                "aligned" if question.reviewed else "unreviewed"
+            ),
+            "reference_context_ids": question.reference_context_ids,
+            "retrieved_chunk_ids": question.retrieved_chunk_ids,
+            "direct_context_precision": direct_context_precision(
+                question.retrieved_chunk_ids,
+                question.reference_context_ids,
+                reviewed=question.reviewed and bool(question.reference_context_ids),
+            ),
+            "direct_context_recall": direct_context_recall(
+                question.retrieved_chunk_ids,
+                question.reference_context_ids,
+                reviewed=question.reviewed and bool(question.reference_context_ids),
+            ),
             "answer": generated.answer,
             "structured_data": generated.structured_data,
             "sources": generated.sources,
@@ -122,18 +212,43 @@ class GenerationEvaluator:
             "final_attempt": generated.final_attempt,
             "retry_count": int(generated.final_attempt == "repaired"),
             "validation_failures": failures,
-            "citation_valid": generated.citations_valid and not any(failure in {"missing_citation", "citation_out_of_range", "unsupported_citation_format"} for failure in failures),
+            "citation_valid": generated.citations_valid
+            and not any(
+                failure
+                in {
+                    "missing_citation",
+                    "citation_out_of_range",
+                    "unsupported_citation_format",
+                }
+                for failure in failures
+            ),
             "claim_citation_coverage": claim_level_citation_coverage(claims),
-            "required_field_completeness": required_field_completeness(present_fields, question.required_fields),
+            "required_field_completeness": required_field_completeness(
+                present_fields, question.required_fields
+            ),
             "max_item_compliant": "too_many_items" not in failures,
-            "qualifying_item_precision": qualifying_item_precision(judged_items, question.expected_qualifying_items) if judged_items is not None else None,
-            "qualifying_item_recall": qualifying_item_recall(judged_items, question.expected_qualifying_items) if judged_items is not None else None,
+            "qualifying_item_precision": (
+                qualifying_item_precision(
+                    judged_items, question.expected_qualifying_items
+                )
+                if judged_items is not None
+                else None
+            ),
+            "qualifying_item_recall": (
+                qualifying_item_recall(judged_items, question.expected_qualifying_items)
+                if judged_items is not None
+                else None
+            ),
             "judge_status": judged.judge_status if judged else "disabled",
             "judge_error": judged.error if judged else None,
-            "judge_verdicts": [asdict(verdict) for verdict in judged.verdicts] if judged else [],
+            "judge_verdicts": (
+                [asdict(verdict) for verdict in judged.verdicts] if judged else []
+            ),
             "calibration_exact_agreement": calibration,
             "latency_ms": generated.latency_ms,
-            "estimated_cost": self.cost_estimator(generated) if self.cost_estimator else None,
+            "estimated_cost": (
+                self.cost_estimator(generated) if self.cost_estimator else None
+            ),
         }
 
 
@@ -195,6 +310,12 @@ def build_generation_result(
         "calibration_exact_agreement": _nullable_mean(calibration),
         "avg_latency_ms": _mean(run["latency_ms"] for run in runs),
         "avg_cost": _nullable_mean(run["estimated_cost"] for run in runs),
+        "direct_context_precision": _nullable_mean(
+            run.get("direct_context_precision") for run in runs
+        ),
+        "direct_context_recall": _nullable_mean(
+            run.get("direct_context_recall") for run in runs
+        ),
     }
     return {
         "provider": provider,
@@ -219,10 +340,32 @@ def save_generation_outputs(
     directory.mkdir(parents=True, exist_ok=True)
     stamp = stamp or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     base = directory / f"generation_eval_{stamp}"
-    json_path, csv_path, markdown_path = base.with_suffix(".json"), base.with_suffix(".csv"), base.with_suffix(".md")
+    json_path, csv_path, markdown_path = (
+        base.with_suffix(".json"),
+        base.with_suffix(".csv"),
+        base.with_suffix(".md"),
+    )
     _atomic_text(json_path, json.dumps(evaluation, indent=2, ensure_ascii=False))
     ragas_metrics = list(evaluation.get("ragas", {}).get("metrics", []))
-    fields = ["id", "reviewed", "citation_valid", "claim_citation_coverage", "required_field_completeness", "finish_reason", "retry_count", "max_item_compliant", "qualifying_item_precision", "qualifying_item_recall", "judge_status", "latency_ms", "estimated_cost", *ragas_metrics]
+    fields = [
+        "id",
+        "source_dataset",
+        "reviewed",
+        "direct_context_precision",
+        "direct_context_recall",
+        "citation_valid",
+        "claim_citation_coverage",
+        "required_field_completeness",
+        "finish_reason",
+        "retry_count",
+        "max_item_compliant",
+        "qualifying_item_precision",
+        "qualifying_item_recall",
+        "judge_status",
+        "latency_ms",
+        "estimated_cost",
+        *ragas_metrics,
+    ]
     ragas_by_id = {
         str(row.get("id")): row
         for row in evaluation.get("ragas", {}).get("questions", [])
@@ -261,7 +404,9 @@ def _claims(answer: str, structured_data: Any | None = None) -> list[dict[str, A
         # separators, but retain cited data rows as coarse fallback claims.
         if normalized.startswith("|") and not citations:
             continue
-        claims.append({"text": normalized, "citations": citations, "cited": bool(citations)})
+        claims.append(
+            {"text": normalized, "citations": citations, "cited": bool(citations)}
+        )
     return claims
 
 
@@ -308,7 +453,9 @@ def _structured_claims(structured_data: Any | None) -> list[dict[str, Any]] | No
 
 def _is_absent_value(text: str) -> bool:
     normalized = " ".join(text.casefold().split())
-    return normalized.startswith("not reported") or normalized.startswith("not provided")
+    return normalized.startswith("not reported") or normalized.startswith(
+        "not provided"
+    )
 
 
 def _mean(values: Any) -> float:
@@ -323,16 +470,27 @@ def _nullable_mean(values: Any) -> float | None:
 
 def _markdown(evaluation: dict[str, Any]) -> str:
     aggregate = evaluation["aggregate"]
-    cost = "unavailable" if aggregate["avg_cost"] is None else f"{aggregate['avg_cost']:.6f}"
+    cost = (
+        "unavailable"
+        if aggregate["avg_cost"] is None
+        else f"{aggregate['avg_cost']:.6f}"
+    )
     lines = [
-        "# Generation evaluation", "",
+        "# Generation evaluation",
+        "",
         f"Provider/model: `{evaluation['provider']}` / `{evaluation['model']}`",
         f"Judge: `{evaluation.get('judge', {}).get('provider')}` / `{evaluation.get('judge', {}).get('model')}`",
         "",
         "| citation valid | claim coverage | field completeness | truncated | retries | grounded | judge coverage | avg ms | avg cost |",
         "|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
         f"| {aggregate['citation_validity_rate']:.3f} | {aggregate['claim_level_citation_coverage']:.3f} | {aggregate['required_field_completeness']:.3f} | {aggregate['truncation_rate']:.3f} | {aggregate['retry_rate']:.3f} | {_format_nullable(aggregate['grounded_claim_rate'])} | {aggregate['judge_coverage']:.3f} | {aggregate['avg_latency_ms']:.1f} | {cost} |",
-        "", "## Per-question failures", "",
+        "",
+        "## Per-question failures",
+        "",
+    ]
+    lines[4:4] = [
+        f"Direct retrieval precision/recall: {_format_nullable(aggregate.get('direct_context_precision'))} / {_format_nullable(aggregate.get('direct_context_recall'))}.",
+        "",
     ]
     coverage = evaluation.get("coverage")
     if coverage:
@@ -343,7 +501,9 @@ def _markdown(evaluation: dict[str, Any]) -> str:
         ]
     for row in evaluation["questions"]:
         failures = ", ".join(row["validation_failures"]) or "none"
-        lines.append(f"- `{row['id']}`: validation={failures}; judge={row['judge_status']}; latency={row['latency_ms']} ms.")
+        lines.append(
+            f"- `{row['id']}`: validation={failures}; judge={row['judge_status']}; latency={row['latency_ms']} ms."
+        )
     ragas = evaluation.get("ragas")
     if ragas:
         lines.extend(["", "## RAGAS (reference-free)", ""])
@@ -356,12 +516,13 @@ def _markdown(evaluation: dict[str, Any]) -> str:
             ]
             lines.extend(
                 [
-                    "| " + " | ".join(name.replace("_", " ") for name in metric_names) + " |",
+                    "| "
+                    + " | ".join(name.replace("_", " ") for name in metric_names)
+                    + " |",
                     "|" + "---:|" * len(metric_names),
                     "| "
                     + " | ".join(
-                        _format_nullable(scores.get(name))
-                        for name in metric_names
+                        _format_nullable(scores.get(name)) for name in metric_names
                     )
                     + " |",
                 ]
@@ -369,7 +530,9 @@ def _markdown(evaluation: dict[str, Any]) -> str:
             if ragas.get("reason"):
                 lines.append(f"\nNote: {ragas['reason']}.")
         else:
-            lines.append(f"RAGAS status: {ragas.get('status', 'unknown')} ({ragas.get('reason', 'no reason')}).")
+            lines.append(
+                f"RAGAS status: {ragas.get('status', 'unknown')} ({ragas.get('reason', 'no reason')})."
+            )
     return "\n".join(lines) + "\n"
 
 
