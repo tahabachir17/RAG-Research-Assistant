@@ -7,6 +7,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+try:
+    from .concept_requirements import ConceptRequirement, parse_required_concepts
+except ImportError:
+    from concept_requirements import ConceptRequirement, parse_required_concepts
+
 
 @dataclass(slots=True)
 class GenerationGoldenQuestion:
@@ -25,7 +30,7 @@ class GenerationGoldenQuestion:
     reference_context_ids: list[str] = field(default_factory=list)
     source_dataset: str = ""
     alignment_status: str = ""
-    required_concepts: list[str] = field(default_factory=list)
+    required_concepts: list[ConceptRequirement] = field(default_factory=list)
     benchmark_category: str = ""
 
 
@@ -67,7 +72,7 @@ def load_generation_golden(
             _strings(record.get("reference_context_ids", [])),
             str(record.get("source_dataset", "")).strip().casefold(),
             str(record.get("alignment_status", "")).strip().casefold(),
-            _strings(record.get("required_concepts", [])),
+            parse_required_concepts(record.get("required_concepts", [])),
             str(record.get("benchmark_category", "")).strip().casefold(),
         )
         if not item.retrieved_chunk_ids and not item.source_dataset:

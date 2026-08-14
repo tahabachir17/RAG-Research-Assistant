@@ -15,11 +15,13 @@ from typing import Any, Callable
 
 try:
     from generation.cli import run_generation
+    from generation.prompt_manager import classify_question_type
     from retrieval.models import RetrievalResult
     from .generation_golden import GenerationGoldenQuestion
     from .generation_metrics import (
         claim_level_citation_coverage,
         concept_recall,
+        concept_recall_details,
         direct_context_precision,
         direct_context_recall,
         qualifying_item_precision,
@@ -31,11 +33,13 @@ try:
     from .llm_judge import LLMJudge
 except ImportError:
     from generation.cli import run_generation
+    from generation.prompt_manager import classify_question_type
     from retrieval.models import RetrievalResult
     from generation_golden import GenerationGoldenQuestion
     from generation_metrics import (
         claim_level_citation_coverage,
         concept_recall,
+        concept_recall_details,
         direct_context_precision,
         direct_context_recall,
         qualifying_item_precision,
@@ -60,12 +64,22 @@ class GenerationEvaluator:
         judge: LLMJudge | None = None,
         max_retries: int = 1,
         max_context_tokens: int = 2500,
+        enable_faithfulness_verifier: bool | None = None,
         cost_estimator: Callable[[Any], float | None] | None = None,
+        evidence_packing_mode: str = "gold",
+        adjacent_chunk_lookup: Callable[[RetrievalResult], Sequence[RetrievalResult]]
+        | None = None,
+        section_chunk_lookup: Callable[[RetrievalResult], Sequence[RetrievalResult]]
+        | None = None,
     ) -> None:
         self.llm, self.chunk_lookup = llm, chunk_lookup
         self.provider, self.model, self.judge = provider, model, judge
         self.max_retries, self.cost_estimator = max_retries, cost_estimator
         self.max_context_tokens = max_context_tokens
+        self.enable_faithfulness_verifier = enable_faithfulness_verifier
+        self.evidence_packing_mode = evidence_packing_mode
+        self.adjacent_chunk_lookup = adjacent_chunk_lookup
+        self.section_chunk_lookup = section_chunk_lookup
 
     def evaluate(self, questions: list[GenerationGoldenQuestion]) -> dict[str, Any]:
         runs = [self._evaluate_one(question) for question in questions]
@@ -87,6 +101,11 @@ class GenerationEvaluator:
             raise ValueError(
                 f"{question.id}: chunk lookup must preserve every frozen chunk id in order"
             )
+        packing_mode = (
+            self.evidence_packing_mode
+            if classify_question_type(question.question) == "mechanism"
+            else "gold"
+        )
         generated = run_generation(
             question.question,
             chunks,
@@ -95,6 +114,11 @@ class GenerationEvaluator:
             max_items=question.max_items,
             max_retries=self.max_retries,
             max_context_tokens=self.max_context_tokens,
+            enable_faithfulness_verifier=self.enable_faithfulness_verifier,
+            required_concepts=question.required_concepts,
+            evidence_packing_mode=packing_mode,
+            adjacent_chunk_lookup=self.adjacent_chunk_lookup,
+            section_chunk_lookup=self.section_chunk_lookup,
         )
         claims = _claims(generated.answer, generated.structured_data)
         missing = {
@@ -209,6 +233,9 @@ class GenerationEvaluator:
             "answer": generated.answer,
             "required_concepts": question.required_concepts,
             "concept_recall": concept_recall(
+                generated.answer, question.required_concepts
+            ),
+            "concept_recall_details": concept_recall_details(
                 generated.answer, question.required_concepts
             ),
             "structured_data": generated.structured_data,

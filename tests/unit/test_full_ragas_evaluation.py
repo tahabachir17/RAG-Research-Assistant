@@ -12,9 +12,14 @@ from evaluation.full_ragas_evaluation import (
 )
 from evaluation.run_full_ragas_eval import (
     RETRIEVAL_CONFIGS,
+    _MMRRetriever,
+    _looks_truncated,
+    _unavailable_reason,
     _parser,
     _resolve_ragas_target,
+    _run_ragas_metric_with_token_retry,
     build_benchmark_retriever,
+    preflight_benchmark_collections,
 )
 from retrieval import RetrievalResult, SparseRetriever
 
@@ -67,6 +72,22 @@ def test_assembly_tags_tiers_and_skips_empty_scidqa(tmp_path):
         ("qasa", "aligned"),
         ("qasper", "unreviewed"),
     ]
+
+
+def test_assembly_can_select_only_reviewed_external_rows(tmp_path):
+    manual = tmp_path / "manual.json"
+    external = tmp_path / "external"
+    _write(manual, [])
+    _write(
+        external / "qasa_generation_qa.json",
+        [_external("reviewed", "qasa", True), _external("draft", "qasa", False)],
+    )
+    _write(external / "qasper_generation_qa.json", [])
+    _write(external / "scidqa_generation_qa.json", [])
+    rows = assemble_evaluation_questions(
+        manual, external, reviewed_external_only=True
+    )
+    assert [row.id for row in rows] == ["reviewed"]
 
 
 def test_assembly_rejects_cross_tier_id_collision(tmp_path):
@@ -149,8 +170,19 @@ def test_part9_defaults_to_factory_hybrid_rerank_and_bench_collection():
     assert args.reranker_candidate_k == 20
     assert args.reranker_max_length == 128
     assert args.judge_max_tokens == 2048
-    assert "hybrid_rerank_mmr" not in RETRIEVAL_CONFIGS
+    assert args.judge_retry_max_tokens == 4096
+    assert args.fallback_judge_model == ""
+    assert "hybrid_rerank_mmr" in RETRIEVAL_CONFIGS
     assert args.retrieval_config in RETRIEVAL_CONFIGS
+
+
+def test_part9_accepts_local_qwen_judge():
+    args = _parser().parse_args(
+        ["--judge-provider", "qwen", "--judge-model", "qwen/qwen3-4b-2507"]
+    )
+
+    assert args.judge_provider == "qwen"
+    assert args.judge_model == "qwen/qwen3-4b-2507"
 
 
 def test_benchmark_retriever_enforces_collection_prefix_before_model_loading():
@@ -179,17 +211,120 @@ def test_sparse_is_allowed_only_when_explicitly_selected(tmp_path):
         ]
     )
     index.save(path)
+    from qdrant_client import QdrantClient, models
+
+    qdrant_path = tmp_path / "qdrant"
+    client = QdrantClient(path=str(qdrant_path))
+    client.create_collection(
+        "bench_external_chunks",
+        vectors_config={"size": 2, "distance": "Cosine"},
+    )
+    client.upsert(
+        "bench_external_chunks",
+        points=[models.PointStruct(id=1, vector=[1.0, 0.0], payload={})],
+    )
+    client.close()
     args = _parser().parse_args(
         [
             "--retrieval-config",
             "sparse",
             "--external-index",
             str(path),
+            "--benchmark-qdrant-path",
+            str(qdrant_path),
         ]
     )
     retriever, client = build_benchmark_retriever(args)
     assert isinstance(retriever, SparseRetriever)
     assert client is None
+
+
+def test_collection_preflight_rejects_missing_required_collection():
+    class Client:
+        def collection_exists(self, name):
+            return False
+
+    with pytest.raises(RuntimeError, match=r"qasa:bench_missing \(missing\)"):
+        preflight_benchmark_collections(Client(), {"qasa": "bench_missing"})
+
+
+def test_collection_preflight_rejects_empty_required_collection():
+    class Client:
+        def collection_exists(self, name):
+            return True
+
+        def get_collection(self, name):
+            return type("Info", (), {"points_count": 0})()
+
+    with pytest.raises(RuntimeError, match="empty"):
+        preflight_benchmark_collections(Client(), {"qasper": "bench_empty"})
+
+
+def test_mmr_is_bypassed_below_reviewed_safe_cutoff():
+    candidates = [RetrievalResult("c1", "first", 1.0, "reranked")]
+
+    class Retriever:
+        def search(self, query, top_k, **kwargs):
+            return candidates
+
+    class Sampler:
+        calls = 0
+
+        def sample(self, query, rows, top_k):
+            self.calls += 1
+            return list(reversed(rows))
+
+    sampler = Sampler()
+    wrapped = _MMRRetriever(Retriever(), sampler, min_top_k=20)
+    assert wrapped.search("query", top_k=4) == candidates
+    assert sampler.calls == 0
+    assert wrapped.search("query", top_k=20) == candidates
+    assert sampler.calls == 1
+
+
+def test_token_retry_uses_expanded_judge_only_for_truncation(monkeypatch):
+    calls = []
+
+    def fake(records, metric, llm, embeddings, args):
+        calls.append(llm)
+        if llm == "small":
+            raise ValueError("no complete JSON object or array found")
+        return {"questions": [{metric: 0.9}]}
+
+    monkeypatch.setattr("evaluation.run_full_ragas_eval._run_ragas_metric", fake)
+    args = _parser().parse_args([])
+    result = _run_ragas_metric_with_token_retry(
+        [], "faithfulness", "small", "large", None, args
+    )
+    assert result["questions"][0]["faithfulness"] == 0.9
+    assert calls == ["small", "large"]
+    assert _looks_truncated(ValueError("no complete JSON object or array found"))
+
+
+def test_malformed_schema_does_not_escalate_token_cap(monkeypatch):
+    def fake(*args, **kwargs):
+        raise ValueError("top-level keys must be ['question', 'noncommittal']")
+
+    monkeypatch.setattr("evaluation.run_full_ragas_eval._run_ragas_metric", fake)
+    args = _parser().parse_args([])
+    with pytest.raises(ValueError, match="top-level keys"):
+        _run_ragas_metric_with_token_retry(
+            [], "answer_relevancy", "small", "large", None, args
+        )
+
+
+def test_known_unanswerable_qasper_case_is_not_score_blocking():
+    question = type(
+        "Question",
+        (),
+        {
+            "id": "qasper-bf00808353eec22b4801c922cce7b1ec0ff3b777",
+            "alignment_status": "unreviewed",
+            "reference_context_ids": [],
+            "reference_answer": "The question is unanswerable from the paper.",
+        },
+    )()
+    assert "unanswerable" in _unavailable_reason(question, "answer_relevancy")
 
 
 def test_reranking_wrapper_retrieves_fifty_candidates_then_returns_top_k():

@@ -5,20 +5,55 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
+try:
+    from .concept_requirements import ConceptRequirement, concept_requirement_phrases
+except ImportError:
+    from concept_requirements import ConceptRequirement, concept_requirement_phrases
 
-def concept_recall(answer: str, required_concepts: Iterable[str]) -> float | None:
+
+def concept_recall(
+    answer: str, required_concepts: Iterable[ConceptRequirement]
+) -> float | None:
     """Return deterministic normalized-phrase recall for required concepts."""
 
-    concepts = {
-        _normalized_phrase(concept)
-        for concept in required_concepts
-        if _normalized_phrase(concept)
-    }
-    if not concepts:
+    details = concept_recall_details(answer, required_concepts)
+    if not details:
         return None
+    return sum(bool(row["matched"]) for row in details) / len(details)
+
+
+def concept_recall_details(
+    answer: str, required_concepts: Iterable[ConceptRequirement]
+) -> list[dict[str, Any]]:
+    """Explain deterministic primary-phrase or alias matches per concept."""
+
     normalized_answer = _normalized_phrase(answer)
-    covered = sum(concept in normalized_answer for concept in concepts)
-    return covered / len(concepts)
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for requirement in required_concepts:
+        concept, aliases = concept_requirement_phrases(requirement)
+        primary = _normalized_phrase(concept)
+        if not primary or primary in seen:
+            continue
+        seen.add(primary)
+        matched_by: str | None = None
+        matched_phrase: str | None = None
+        if primary in normalized_answer:
+            matched_by, matched_phrase = "primary", concept
+        else:
+            for alias in aliases:
+                if _normalized_phrase(alias) in normalized_answer:
+                    matched_by, matched_phrase = "alias", alias
+                    break
+        result.append(
+            {
+                "concept": concept,
+                "matched": matched_by is not None,
+                "matched_by": matched_by,
+                "matched_phrase": matched_phrase,
+            }
+        )
+    return result
 
 
 def qualifying_item_precision(

@@ -123,8 +123,23 @@ def compound_question_instruction(question: str) -> str:
 
 
 QUESTION_TYPE_INSTRUCTIONS = {
-    "direct_fact": "Give a short, direct answer before any supporting detail.",
-    "mechanism": "Enumerate each supported mechanism and explain what each one does.",
+    "direct_fact": (
+        "Give a short, direct answer before any supporting detail. Keep it short, "
+        "but include any qualifying detail the context directly attaches to the "
+        "requested fact, such as a condition, scope, or comparison."
+    ),
+    "mechanism": (
+        "Enumerate each supported mechanism and explain what each one does. "
+        "When the context names a specific mechanism with a technical term "
+        "(e.g. a named layer, operation, or method), use that term in the answer "
+        "rather than a generic paraphrase. If the context describes multiple "
+        "distinct mechanisms, name each one individually rather than summarizing "
+        "them as a category (e.g. 'parallelism and context'). For a multi-step "
+        "process, trace the context-supported process from its inputs through "
+        "intermediate results to its outcome. State what is stored between steps "
+        "and what objective is optimized when the source specifies either; these "
+        "are mechanisms, not optional supporting details."
+    ),
     "causes_evidence": (
         "Enumerate each supported cause, then pair it with the reported evidence."
     ),
@@ -137,12 +152,27 @@ QUESTION_TYPE_INSTRUCTIONS = {
 }
 
 
+_ATTRIBUTION_PREFIX = re.compile(
+    r"^[^?\n]*?(?:'[^']+'|\"[^\"]+\"|‘[^’]+’|“[^”]+”)\s*,\s*",
+    re.IGNORECASE,
+)
+
+
+def _strip_attribution_prefix(question: str) -> str:
+    """Remove a leading non-question clause that attributes a quoted paper."""
+
+    stripped = question.strip()
+    if _QUESTION_STEM.match(stripped):
+        return stripped
+    return _ATTRIBUTION_PREFIX.sub("", stripped, count=1)
+
+
 def classify_question_type(question: str) -> str:
     """Classify a question into one of the five supported answer structures."""
 
     if not isinstance(question, str):
         raise TypeError("question must be a string")
-    normalized = " ".join(question.casefold().split())
+    normalized = " ".join(_strip_attribution_prefix(question).casefold().split())
     if not normalized:
         raise ValueError("question must not be empty")
     if re.search(r"\blimitations?\b|\bfuture work\b|\bimprovements?\b", normalized):
@@ -153,8 +183,10 @@ def classify_question_type(question: str) -> str:
         r"\b(?:better|advantage|outperform|improv(?:e|es|ed|ement))\b", normalized
     ):
         return "causes_evidence"
+    if re.match(r"how\s+(?:much|many|long|fast|often)\b", normalized):
+        return "direct_fact"
     if normalized.startswith("how ") or re.search(
-        r"\b(?:mechanism|work|operate|achieve)\b", normalized
+        r"\b(?:mechanisms?|work|operate|achieve)\b", normalized
     ):
         return "mechanism"
     return "direct_fact"

@@ -1,0 +1,13 @@
+id,difficulty,same_answer,baseline_correctness,new_correctness,delta,new_faithfulness,new_relevancy
+controlled-video-01,easy,false,0.619375,0.949589,0.330214,1.000000,0.849976
+controlled-qrnn-02,moderate,true,0.154606,0.404606,0.250000,1.000000,0.844180
+controlled-nsm-01,easy,false,0.751309,0.862403,0.111095,1.000000,0.554063
+controlled-nsm-02,moderate,false,0.677858,0.748202,0.070344,1.000000,0.425269
+controlled-video-02,moderate,false,0.495683,0.549614,0.053931,1.000000,0.937657
+controlled-reddit-02,moderate,false,0.915228,0.930474,0.015247,1.000000,0.350794
+controlled-enquirer-02,moderate,false,0.541205,0.556280,0.015074,1.000000,0.835200
+controlled-submodular-01,easy,true,0.580890,0.580890,0.000000,1.000000,0.464170
+controlled-enquirer-01,easy,true,0.551099,0.551099,0.000000,1.000000,0.705430
+controlled-submodular-02,moderate,false,0.401823,0.234010,-0.167813,1.000000,0.927264
+controlled-reddit-01,easy,true,0.805416,0.580416,-0.225000,1.000000,0.291782
+controlled-qrnn-01,easy,false,0.962726,0.568704,-0.394021,1.000000,0.893234

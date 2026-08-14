@@ -78,7 +78,7 @@ class ContextAssembler:
         self,
         ranked_chunks: Sequence[RetrievalResult],
         *,
-        required_concepts: Sequence[str] = (),
+        required_concepts: Sequence[Any] = (),
     ) -> AssembledContext:
         if isinstance(ranked_chunks, (str, bytes)) or not isinstance(
             ranked_chunks, Sequence
@@ -137,7 +137,7 @@ class ContextAssembler:
     def _pack(
         self,
         ranked_chunks: Sequence[RetrievalResult],
-        required_concepts: Sequence[str],
+        required_concepts: Sequence[Any],
     ) -> list[RetrievalResult]:
         if self.evidence_packing_mode == "gold" or len(required_concepts) <= 1:
             return list(ranked_chunks)
@@ -157,7 +157,12 @@ class ContextAssembler:
             for candidate in candidates:
                 if not isinstance(candidate, RetrievalResult):
                     raise TypeError("evidence packing lookups must return RetrievalResult")
-                if candidate.paper_id != gold.paper_id or candidate.section != gold.section:
+                if candidate.paper_id != gold.paper_id:
+                    continue
+                if (
+                    self.evidence_packing_mode == "section"
+                    and candidate.section != gold.section
+                ):
                     continue
                 if candidate.chunk_id in seen:
                     continue

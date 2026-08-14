@@ -1,0 +1,11 @@
+metric,run,score,delta,target,n
+Answer correctness,Baseline,0.621435,0.000000,0.75,12
+Answer correctness,Remediation,0.626357,0.004923,0.75,12
+Faithfulness,Baseline,1.000000,0.000000,0.85,12
+Faithfulness,Remediation,1.000000,0.000000,0.85,12
+Answer relevancy,Baseline,0.687934,0.000000,0.80,12
+Answer relevancy,Remediation,0.673252,-0.014683,0.80,12
+Context precision,Baseline,1.000000,0.000000,0.75,12
+Context precision,Remediation,1.000000,0.000000,0.75,12
+Context recall,Baseline,1.000000,0.000000,0.70,12
+Context recall,Remediation,1.000000,0.000000,0.70,12

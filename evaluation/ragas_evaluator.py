@@ -187,7 +187,11 @@ def evaluate_with_ragas(
             max_wait=60,
             max_workers=max_workers,
         ),
-        raise_exceptions=False,
+        # Callers own bounded retries and per-metric failure recording.  If
+        # RAGAS swallows worker exceptions here it converts actionable parser
+        # or provider failures to NaN, preventing those retry paths from ever
+        # running and leaving only the opaque "metric unavailable" message.
+        raise_exceptions=True,
     )
     scored = result.to_pandas().to_dict(orient="records")
     question_rows: list[dict[str, Any]] = []
@@ -276,6 +280,7 @@ def _ragas_llm_options(settings: Any) -> dict[str, Any]:
             api_key=settings.GROQ_API_KEY,
             base_url="https://api.groq.com/openai/v1",
             max_retries=5,
+            model_kwargs={"response_format": {"type": "json_object"}},
         )
     elif provider == "openai":
         if not settings.OPENAI_API_KEY:
@@ -300,6 +305,10 @@ def _ragas_llm_options(settings: Any) -> dict[str, Any]:
         options.update(
             api_key=settings.LMSTUDIO_API_KEY,
             base_url=settings.LMSTUDIO_BASE_URL,
+            max_retries=settings.LLM_TRANSPORT_MAX_RETRIES,
+            # Qwen3 otherwise spends most of a CPU-only request budget on
+            # hidden reasoning. RAGAS needs a short structured verdict.
+            extra_body={"chat_template_kwargs": {"enable_thinking": False}},
         )
     else:
         raise ValueError(
@@ -336,7 +345,7 @@ def _build_metrics(
 
 
 def _install_ragas_schema_guard() -> None:
-    """Make RAGAS repair schema-invalid JSON and raise after repair exhaustion."""
+    """Recover schema-valid RAGAS JSON, then repair genuinely invalid output."""
 
     from ragas.llms.output_parser import RagasoutputParser
 
@@ -353,8 +362,7 @@ def _install_ragas_schema_guard() -> None:
         from ragas.llms.output_parser import FIX_OUTPUT_FORMAT
 
         try:
-            payload = json.loads(_strip_json_fence(result))
-            _validate_ragas_payload(payload, self.pydantic_object)
+            payload = _parse_ragas_payload(result, self.pydantic_object)
             return self.pydantic_object.parse_obj(payload)
         except Exception as exc:
             if max_retries > 0:
@@ -369,10 +377,82 @@ def _install_ragas_schema_guard() -> None:
                     llm,
                     max_retries - 1,
                 )
-            raise ValueError(f"RAGAS output failed schema validation: {exc}") from exc
+            preview = " ".join(result.strip().split())[:500]
+            raise ValueError(
+                f"RAGAS output failed schema validation: {exc}; output={preview!r}"
+            ) from exc
 
     RagasoutputParser.aparse = guarded_aparse
     RagasoutputParser._project_schema_guard = True
+
+
+def _parse_ragas_payload(text: str, model: Any) -> Any:
+    """Find the first schema-valid JSON value in a noisy model completion.
+
+    Smaller OpenAI-compatible judges commonly surround the requested value with
+    prose/code fences or put a top-level array below a descriptive wrapper such
+    as ``{"analysis": [...]}``.  Those are transport-shape mistakes, not a
+    reason to spend another judge call.  Every candidate is still checked by
+    both the explicit top-level guard and the target Pydantic model.
+    """
+
+    last_error: Exception | None = None
+    expected_type = model.schema().get("type")
+    for decoded in _decoded_json_values(_strip_json_fence(text)):
+        candidates = _nested_json_candidates(decoded, expected_type)
+        if expected_type == "array":
+            # With one claim, Groq often returns the array item directly.  It
+            # is safe to wrap only when the target list model validates it.
+            candidates.extend(
+                [[candidate] for candidate in candidates if isinstance(candidate, dict)]
+            )
+        for candidate in candidates:
+            try:
+                _validate_ragas_payload(candidate, model)
+                model.parse_obj(candidate)
+                return candidate
+            except Exception as exc:
+                last_error = exc
+    if last_error is not None:
+        raise last_error
+    raise ValueError("no complete JSON object or array found")
+
+
+def _decoded_json_values(text: str) -> list[Any]:
+    """Decode complete JSON objects/arrays even when other text surrounds them."""
+
+    decoder = json.JSONDecoder()
+    values: list[Any] = []
+    cursor = 0
+    while cursor < len(text):
+        starts = [index for char in "[{" if (index := text.find(char, cursor)) >= 0]
+        if not starts:
+            break
+        start = min(starts)
+        try:
+            value, end = decoder.raw_decode(text, start)
+        except json.JSONDecodeError:
+            cursor = start + 1
+            continue
+        values.append(value)
+        cursor = end
+    return values
+
+
+def _nested_json_candidates(value: Any, expected_type: str | None) -> list[Any]:
+    """Return a value plus wrapper contents matching the expected root type."""
+
+    candidates = [value]
+    if isinstance(value, dict):
+        for nested in value.values():
+            nested_type = "array" if isinstance(nested, list) else "object"
+            if nested_type == expected_type:
+                candidates.append(nested)
+            # Array schemas are unambiguous enough to recover through nested
+            # descriptive wrappers such as {"analysis": {"statements": [...]}}.
+            if expected_type == "array" and isinstance(nested, dict):
+                candidates.extend(_nested_json_candidates(nested, expected_type))
+    return candidates
 
 
 def _strip_json_fence(text: str) -> str:
@@ -427,7 +507,6 @@ async def _chunked_faithfulness_ascore(
     import numpy as np
     from ragas.metrics._faithfulness import (
         _faithfulness_output_parser,
-        _statements_output_parser,
         ensembler,
     )
 
@@ -438,25 +517,18 @@ async def _chunked_faithfulness_ascore(
         for sentence in metric.sentence_segmenter.segment(row["answer"])
         if sentence.strip().endswith(".")
     ]
-    statements: list[str] = []
-    for batch in _batches(sentences, 4):
-        numbered = "\n".join(f"{index}:{value}" for index, value in enumerate(batch))
-        prompt = metric.statement_prompt.format(
-            question=row["question"], answer=" ".join(batch), sentences=numbered
-        )
-        raw = await metric.llm.generate(prompt, callbacks=callbacks)
-        parsed = await _statements_output_parser.aparse(
-            raw.generations[0][0].text, prompt, metric.llm, metric.max_retries
-        )
-        statements.extend(
-            statement
-            for item in parsed.dicts()
-            for statement in item["simpler_statements"]
-        )
+    # Answers are projected into short factual sentences by ``_ragas_answer``.
+    # Treat those sentences as claims directly.  RAGAS 0.1.14 otherwise asks
+    # the judge to rewrite them into ``[{sentence_index, simpler_statements}]``;
+    # current Groq models consistently return plain string arrays for that
+    # legacy schema, wasting calls before the actual evidence verdict.
+    statements = sentences
     if not statements:
         return np.nan
     verdicts: list[dict[str, Any]] = []
-    for batch in _batches(statements, 5):
+    # One claim per call keeps local CPU judges below the request timeout even
+    # when the frozen evidence context is large.
+    for batch in _batches(statements, 1):
         prompt = metric._create_nli_prompt(row, batch)
         raw = await metric.llm.generate(
             prompt, callbacks=callbacks, n=metric._reproducibility

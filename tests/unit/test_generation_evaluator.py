@@ -91,3 +91,60 @@ def test_structured_table_cells_become_atomic_claims_without_header_or_abstentio
             "cited": True,
         },
     ]
+
+
+def test_mechanism_question_packs_adjacent_evidence_for_multiple_concepts():
+    gold = RetrievalResult(
+        "gold",
+        "Features are computed convolutionally in parallel.",
+        1.0,
+        "frozen",
+        paper_id="p1",
+        section="conclusion",
+    )
+    neighbor = RetrievalResult(
+        "neighbor",
+        "The recurrent pooling layer preserves context.",
+        1.0,
+        "frozen",
+        paper_id="p1",
+        section="methodology",
+    )
+    question = GenerationGoldenQuestion(
+        id="qrnn",
+        question="How do QRNNs combine convolutional and recurrent properties?",
+        retrieved_chunk_ids=["gold"],
+        expected_qualifying_items=[],
+        excluded_items={},
+        required_fields=[],
+        max_items=None,
+        reviewed=True,
+        calibration_verdicts=[],
+        required_concepts=["parallel convolution", "recurrent pooling"],
+    )
+
+    class MechanismLLM:
+        def complete_json(self, system, user):
+            assert "Features are computed convolutionally in parallel." in user
+            assert "The recurrent pooling layer preserves context." in user
+            return LLMCompletion(
+                '{"answer_status":"answered","summary":"","claims":['
+                '{"text":"QRNNs use parallel convolution and recurrent pooling.",'
+                '"citations":[1,2]}]}',
+                "stop",
+            )
+
+    result = GenerationEvaluator(
+        llm=MechanismLLM(),
+        chunk_lookup=lambda ids: [gold],
+        provider="fake",
+        model="answerer",
+        evidence_packing_mode="adjacent",
+        adjacent_chunk_lookup=lambda chunk: [neighbor],
+    ).evaluate([question])
+
+    assert result["questions"][0]["context_chunk_ids"] == ["gold", "neighbor"]
+    assert [
+        row["matched_by"]
+        for row in result["questions"][0]["concept_recall_details"]
+    ] == ["primary", "primary"]

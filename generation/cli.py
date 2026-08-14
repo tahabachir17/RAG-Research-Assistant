@@ -140,11 +140,21 @@ def run_generation(
     max_items: int | None = None,
     max_retries: int | None = None,
     faithfulness_verifier: FaithfulnessVerifier | None = None,
+    enable_faithfulness_verifier: bool | None = None,
+    required_concepts: Sequence[Any] = (),
+    evidence_packing_mode: str = "gold",
+    adjacent_chunk_lookup: Any | None = None,
+    section_chunk_lookup: Any | None = None,
 ) -> GeneratedAnswer:
     """Run generation through deterministic validation and one repair attempt."""
 
     started_at = time.monotonic()
-    context = ContextAssembler(max_context_tokens=max_context_tokens).assemble(ranked_results)
+    context = ContextAssembler(
+        max_context_tokens=max_context_tokens,
+        evidence_packing_mode=evidence_packing_mode,
+        adjacent_chunk_lookup=adjacent_chunk_lookup,
+        section_chunk_lookup=section_chunk_lookup,
+    ).assemble(ranked_results, required_concepts=required_concepts)
     if not context.citation_map:
         raise ValueError("No complete retrieval chunk fits in the context budget")
     system, user = PromptManager().render(
@@ -197,7 +207,12 @@ def run_generation(
         structured_data=outcome.structured_data,
     )
     verifier = faithfulness_verifier
-    if verifier is None and settings.ENABLE_FAITHFULNESS_VERIFIER:
+    verifier_enabled = (
+        settings.ENABLE_FAITHFULNESS_VERIFIER
+        if enable_faithfulness_verifier is None
+        else enable_faithfulness_verifier
+    )
+    if verifier is None and verifier_enabled:
         verifier = build_faithfulness_verifier(settings)
     if verifier is not None:
         verifier_flags = verifier.verify(

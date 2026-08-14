@@ -1,0 +1,336 @@
+{
+  "schema_version": 1,
+  "description": "Reviewed generation-quality golden set derived from the controlled retrieval benchmark. Retrieval is frozen to the listed authoritative production chunks so generation scores are not contaminated by retrieval misses.",
+  "questions": [
+    {
+      "id": "controlled-submodular-01",
+      "paper_id": "1110.2162v2",
+      "title": "Large-Margin Learning of Submodular Summarization Methods",
+      "difficulty": "easy",
+      "question": "In 'Large-Margin Learning of Submodular Summarization Methods', what type of summarization is trained with the proposed supervised method?",
+      "reference_answer": "The method trains submodular scoring functions for extractive multi-document summarization.",
+      "retrieved_chunk_ids": ["7a3c8862-3320-594b-90b1-ac148592ca38"],
+      "reference_context_ids": ["7a3c8862-3320-594b-90b1-ac148592ca38"],
+      "expected_qualifying_items": [],
+      "excluded_items": {},
+      "required_fields": [],
+      "max_items": null,
+      "reviewed": true,
+      "calibration_verdicts": [],
+      "required_concepts": [
+        {
+          "concept": "extractive summarization",
+          "aliases": [
+            "extractive multi-document summarization"
+          ]
+        },
+        "multi-document summarization"
+      ],
+      "source_dataset": "controlled",
+      "alignment_status": "aligned"
+    },
+    {
+      "id": "controlled-submodular-02",
+      "paper_id": "1110.2162v2",
+      "title": "Large-Margin Learning of Submodular Summarization Methods",
+      "difficulty": "moderate",
+      "question": "Why does the structural-SVM learning approach in 'Large-Margin Learning of Submodular Summarization Methods' improve on manually tuned summarization models?",
+      "reference_answer": "It directly learns the scoring parameters and coverage-redundancy trade-off, can handle many features, and significantly outperforms hand-tuned models on DUC 2003 and 2004.",
+      "retrieved_chunk_ids": ["a05a54f4-2d8d-5f38-b49d-d689ccb14e91"],
+      "reference_context_ids": ["a05a54f4-2d8d-5f38-b49d-d689ccb14e91"],
+      "expected_qualifying_items": [], "excluded_items": {}, "required_fields": [], "max_items": null,
+      "required_concepts": [
+        {
+          "concept": "outperforms hand-tuned models",
+          "aliases": [
+            "improves on manually tuned summarization models"
+          ]
+        },
+        {
+          "concept": "handles large numbers of features",
+          "aliases": [
+            "handle large numbers of features"
+          ]
+        },
+        {
+          "concept": "controls overfitting",
+          "aliases": [
+            "control of overfitting"
+          ]
+        },
+        "few training examples"
+      ],
+      "reviewed": true, "calibration_verdicts": [], "source_dataset": "controlled", "alignment_status": "aligned"
+    },
+    {
+      "id": "controlled-enquirer-01",
+      "paper_id": "1512.00965v2",
+      "title": "Neural Enquirer: Learning to Query Tables with Natural Language",
+      "difficulty": "easy",
+      "question": "In 'Neural Enquirer: Learning to Query Tables with Natural Language', what does the model execute natural-language queries against to obtain answers?",
+      "reference_answer": "It executes the queries against knowledge-base tables and returns table values as answers.",
+      "retrieved_chunk_ids": ["059ea598-63b5-5d9b-95be-772231d294cc"],
+      "reference_context_ids": ["059ea598-63b5-5d9b-95be-772231d294cc"],
+      "expected_qualifying_items": [], "excluded_items": {}, "required_fields": [], "max_items": null,
+      "required_concepts": [
+        "knowledge-base tables"
+      ],
+      "reviewed": true, "calibration_verdicts": [], "source_dataset": "controlled", "alignment_status": "aligned"
+    },
+    {
+      "id": "controlled-enquirer-02",
+      "paper_id": "1512.00965v2",
+      "title": "Neural Enquirer: Learning to Query Tables with Natural Language",
+      "difficulty": "moderate",
+      "question": "In 'Neural Enquirer: Learning to Query Tables with Natural Language', how does the model handle multi-step compositional queries without predefined logical operations?",
+      "reference_answer": "It stacks differentiable executors that condition operations on the query and store intermediate table annotations in layered memory, learning their logic end to end from query-answer pairs.",
+      "retrieved_chunk_ids": ["e13d5709-534f-5078-bf3e-146cb78bcce3"],
+      "reference_context_ids": ["e13d5709-534f-5078-bf3e-146cb78bcce3"],
+      "expected_qualifying_items": [], "excluded_items": {}, "required_fields": [], "max_items": null,
+      "required_concepts": [
+        {
+          "concept": "stacked executors",
+          "aliases": [
+            "stacking several executors",
+            "series of executors"
+          ]
+        },
+        {
+          "concept": "operations conditioned on the query",
+          "aliases": [
+            "semantic information of the original query, which is then sent to various executors"
+          ]
+        },
+        {
+          "concept": "intermediate table annotations in layered memory",
+          "aliases": [
+            "annotations that encode intermediate execution results, which are stored in the memory of each layer"
+          ]
+        },
+        {
+          "concept": "end-to-end training from query-answer pairs",
+          "aliases": [
+            "end-to-end training using query-answer pairs",
+            "query-answer pairs, where the distributed representations of queries and the KB are optimized together with the query execution logic in an end-to-end fashion"
+          ]
+        }
+      ],
+      "reviewed": true, "calibration_verdicts": [], "source_dataset": "controlled", "alignment_status": "aligned"
+    },
+    {
+      "id": "controlled-qrnn-01",
+      "paper_id": "1611.01576v2",
+      "title": "Quasi-Recurrent Neural Networks",
+      "difficulty": "easy",
+      "question": "According to the paper 'Quasi-Recurrent Neural Networks', how much faster can QRNNs be than stacked LSTMs?",
+      "reference_answer": "QRNNs can be up to 16 times faster during training and testing.",
+      "retrieved_chunk_ids": ["38def8d5-e378-5ac5-9b85-f03953a2f686"],
+      "reference_context_ids": ["38def8d5-e378-5ac5-9b85-f03953a2f686"],
+      "expected_qualifying_items": [], "excluded_items": {}, "required_fields": [], "max_items": null,
+      "required_concepts": [
+        "up to 16 times faster",
+        "train and test time"
+      ],
+      "reviewed": true, "calibration_verdicts": [], "source_dataset": "controlled", "alignment_status": "aligned"
+    },
+    {
+      "id": "controlled-qrnn-02",
+      "paper_id": "1611.01576v2",
+      "title": "Quasi-Recurrent Neural Networks",
+      "difficulty": "moderate",
+      "question": "In 'Quasi-Recurrent Neural Networks', how do QRNNs combine the useful properties of convolutional and recurrent sequence models?",
+      "reference_answer": "They compute context-invariant features convolutionally in parallel while using recurrent pooling for long-distance context and sequence order.",
+      "retrieved_chunk_ids": ["86e4d367-e844-569c-9afa-c41c7768edaa"],
+      "reference_context_ids": ["86e4d367-e844-569c-9afa-c41c7768edaa"],
+      "expected_qualifying_items": [], "excluded_items": {}, "required_fields": [], "max_items": null,
+      "required_concepts": [
+        {
+          "concept": "parallel convolutional computation",
+          "aliases": [
+            "convolutional aspects computed in parallel",
+            "computed in parallel (e.g., convolutionally)",
+            "convolutional computation"
+          ]
+        },
+        "recurrent pooling",
+        "long-distance context"
+      ],
+      "reviewed": true, "calibration_verdicts": [], "source_dataset": "controlled", "alignment_status": "aligned"
+    },
+    {
+      "id": "controlled-nsm-01",
+      "paper_id": "1611.00020v4",
+      "title": "Neural Symbolic Machines: Learning Semantic Parsers on Freebase with Weak Supervision",
+      "difficulty": "easy",
+      "question": "In 'Neural Symbolic Machines: Learning Semantic Parsers on Freebase with Weak Supervision', what are the two main components of the proposed system?",
+      "reference_answer": "It combines a neural sequence-to-sequence programmer with key-variable memory and a symbolic Lisp interpreter that executes programs.",
+      "retrieved_chunk_ids": ["1dbf7f2e-8318-57b7-8d25-f6fdbe166a81"],
+      "reference_context_ids": ["1dbf7f2e-8318-57b7-8d25-f6fdbe166a81"],
+      "expected_qualifying_items": [], "excluded_items": {}, "required_fields": [], "max_items": null,
+      "required_concepts": [
+        {
+          "concept": "sequence-to-sequence programmer with key-variable memory",
+          "aliases": [
+            "sequence-to-sequence model that maps language utterances to programs and utilizes a key-variable memory"
+          ]
+        },
+        {
+          "concept": "symbolic Lisp interpreter",
+          "aliases": [
+            "symbolic 'computer' is a Lisp interpreter"
+          ]
+        },
+        "program execution"
+      ],
+      "reviewed": true, "calibration_verdicts": [], "source_dataset": "controlled", "alignment_status": "aligned"
+    },
+    {
+      "id": "controlled-nsm-02",
+      "paper_id": "1611.00020v4",
+      "title": "Neural Symbolic Machines: Learning Semantic Parsers on Freebase with Weak Supervision",
+      "difficulty": "moderate",
+      "question": "In 'Neural Symbolic Machines: Learning Semantic Parsers on Freebase with Weak Supervision', how is training stabilized when only weak supervision is available?",
+      "reference_answer": "It applies REINFORCE to optimize task reward and bootstraps learning with pseudo-gold programs found through iterative maximum-likelihood training.",
+      "retrieved_chunk_ids": ["26af9bea-0d86-5b50-b866-7e4617e98db4"],
+      "reference_context_ids": ["26af9bea-0d86-5b50-b866-7e4617e98db4"],
+      "expected_qualifying_items": [], "excluded_items": {}, "required_fields": [], "max_items": null,
+      "required_concepts": [
+        "REINFORCE optimizes task reward",
+        "pseudo-gold programs",
+        {
+          "concept": "iterative maximum-likelihood training",
+          "aliases": [
+            "iterative ML training process"
+          ]
+        },
+        {
+          "concept": "bootstraps training",
+          "aliases": [
+            "bootstrap training"
+          ]
+        }
+      ],
+      "reviewed": true, "calibration_verdicts": [], "source_dataset": "controlled", "alignment_status": "aligned"
+    },
+    {
+      "id": "controlled-video-01",
+      "paper_id": "1502.08029v5",
+      "title": "Describing Videos by Exploiting Temporal Structure",
+      "difficulty": "easy",
+      "question": "Which two mechanisms model local and global temporal structure in 'Describing Videos by Exploiting Temporal Structure'?",
+      "reference_answer": "A 3-D convolutional neural network models local temporal dynamics, while temporal attention selects relevant segments across the full video.",
+      "retrieved_chunk_ids": ["a870915a-f07f-58eb-99c0-ca77078cbde5"],
+      "reference_context_ids": ["a870915a-f07f-58eb-99c0-ca77078cbde5"],
+      "expected_qualifying_items": [], "excluded_items": {}, "required_fields": [], "max_items": null,
+      "required_concepts": [
+        {
+          "concept": "3-D convolutional neural network",
+          "aliases": [
+            "3-D CNN representation"
+          ]
+        },
+        {
+          "concept": "local temporal dynamics",
+          "aliases": [
+            "local temporal structure"
+          ]
+        },
+        "temporal attention",
+        "relevant temporal segments"
+      ],
+      "reviewed": true, "calibration_verdicts": [], "source_dataset": "controlled", "alignment_status": "aligned"
+    },
+    {
+      "id": "controlled-video-02",
+      "paper_id": "1502.08029v5",
+      "title": "Describing Videos by Exploiting Temporal Structure",
+      "difficulty": "moderate",
+      "question": "According to 'Describing Videos by Exploiting Temporal Structure', why can averaging all frame features be inadequate for video description?",
+      "reference_answer": "Averaging collapses time, can mix distinct events and objects incoherently, and loses information about their order.",
+      "retrieved_chunk_ids": ["1948eb00-1c2c-541b-b527-ae55940df13f"],
+      "reference_context_ids": ["1948eb00-1c2c-541b-b527-ae55940df13f"],
+      "expected_qualifying_items": [], "excluded_items": {}, "required_fields": [], "max_items": null,
+      "required_concepts": [
+        "fuses temporally distinct events and objects",
+        {
+          "concept": "ignores temporal structure",
+          "aliases": [
+            "ignores the temporal structure"
+          ]
+        },
+        {
+          "concept": "loses appearance order",
+          "aliases": [
+            "order of appearances of objects"
+          ]
+        }
+      ],
+      "reviewed": true, "calibration_verdicts": [], "source_dataset": "controlled", "alignment_status": "aligned"
+    },
+    {
+      "id": "controlled-reddit-01",
+      "paper_id": "1606.03667v4",
+      "title": "Deep Reinforcement Learning with a Combinatorial Action Space for Predicting Popular Reddit Threads",
+      "difficulty": "easy",
+      "question": "In 'Deep Reinforcement Learning with a Combinatorial Action Space for Predicting Popular Reddit Threads', which architecture performed best?",
+      "reference_answer": "The model using a bidirectional LSTM to represent dependencies among sub-actions performed best.",
+      "retrieved_chunk_ids": ["9a0fbef3-29ea-5424-89ad-c659dd3948ea", "4093aff9-61a7-519c-a784-a15097af6435"],
+      "reference_context_ids": ["9a0fbef3-29ea-5424-89ad-c659dd3948ea", "4093aff9-61a7-519c-a784-a15097af6435"],
+      "expected_qualifying_items": [], "excluded_items": {}, "required_fields": [], "max_items": null,
+      "required_concepts": [
+        {
+          "concept": "bidirectional LSTM",
+          "aliases": [
+            "bi-directional LSTM"
+          ]
+        },
+        {
+          "concept": "dependencies between sub-actions",
+          "aliases": [
+            "dependence between sub-actions"
+          ]
+        },
+        {
+          "concept": "best performance",
+          "aliases": [
+            "performed best"
+          ]
+        }
+      ],
+      "reviewed": true, "calibration_verdicts": [], "source_dataset": "controlled", "alignment_status": "aligned"
+    },
+    {
+      "id": "controlled-reddit-02",
+      "paper_id": "1606.03667v4",
+      "title": "Deep Reinforcement Learning with a Combinatorial Action Space for Predicting Popular Reddit Threads",
+      "difficulty": "moderate",
+      "question": "In 'Deep Reinforcement Learning with a Combinatorial Action Space for Predicting Popular Reddit Threads', what limitations and future improvements are identified?",
+      "reference_answer": "Performance remains far below an oracle; future work should incorporate timing and short-term reactions, support backtracking, and address combinatorial complexity more systematically.",
+      "retrieved_chunk_ids": ["4093aff9-61a7-519c-a784-a15097af6435"],
+      "reference_context_ids": ["4093aff9-61a7-519c-a784-a15097af6435"],
+      "expected_qualifying_items": [], "excluded_items": {}, "required_fields": [], "max_items": null,
+      "required_concepts": [
+        {
+          "concept": "falls short of the oracle",
+          "aliases": [
+            "falling far short of the oracle result"
+          ]
+        },
+        {
+          "concept": "timing and short-term reactions",
+          "aliases": [
+            "incorporating timing information, exploring short-term reactions"
+          ]
+        },
+        "backtracking in the sub-action space",
+        {
+          "concept": "combinatorial action-space complexity",
+          "aliases": [
+            "computational complexity of the combinatorial action space"
+          ]
+        }
+      ],
+      "reviewed": true, "calibration_verdicts": [], "source_dataset": "controlled", "alignment_status": "aligned"
+    }
+  ]
+}

@@ -14,7 +14,9 @@ __pycache__/
 .env
 
 data/
-evaluation/data
+!evaluation/data/
+evaluation/data/*
+!evaluation/data/controlled_generation_qa.json
 # Pytest cache
 pytest_cache/
 .pytest_cache/

@@ -27,7 +27,7 @@ class PackingComparisonRow:
 
 def run_packing_comparison(
     gold_chunks: Sequence[RetrievalResult],
-    required_concepts: Sequence[str],
+    required_concepts: Sequence[Any],
     *,
     score_context: Callable[[str, AssembledContext], dict[str, float]],
     adjacent_chunk_lookup: Callable[[RetrievalResult], Sequence[RetrievalResult]],

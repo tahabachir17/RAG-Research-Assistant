@@ -11,6 +11,7 @@ from evaluation.ragas_evaluator import (
     _batches,
     _build_metrics,
     _install_ragas_schema_guard,
+    _parse_ragas_payload,
     _ragas_llm_options,
     _validate_ragas_payload,
     build_ragas_records,
@@ -163,6 +164,23 @@ def test_ragas_qwen_uses_local_lmstudio_endpoint():
     assert options["model"] == "qwen-local"
     assert options["base_url"] == settings.LMSTUDIO_BASE_URL
     assert options["timeout"] == 90
+    assert options["max_retries"] == 0
+    assert options["extra_body"] == {
+        "chat_template_kwargs": {"enable_thinking": False}
+    }
+
+
+def test_ragas_groq_requests_json_object_mode():
+    settings = Settings(
+        _env_file=None,
+        JUDGE_PROVIDER="groq",
+        JUDGE_MODEL="llama-3.1-8b-instant",
+        GROQ_API_KEY="test-key",
+    )
+    options = _ragas_llm_options(settings)
+    assert options["model_kwargs"] == {
+        "response_format": {"type": "json_object"}
+    }
 
 
 def test_ragas_gemini_preserves_existing_openai_key_fallback():
@@ -191,6 +209,70 @@ def test_ragas_schema_guard_rejects_valid_json_with_wrong_top_level_keys():
             {"analysis": [{"question": "Q", "noncommittal": 0}]},
             _AnswerSchema,
         )
+
+
+def test_ragas_parser_extracts_json_from_prose_and_trailing_text():
+    payload = _parse_ragas_payload(
+        'Result:\n{"question":"Relevant?","noncommittal":0}\nDone.',
+        _AnswerSchema,
+    )
+
+    assert payload == {"question": "Relevant?", "noncommittal": 0}
+
+
+def test_ragas_parser_unwraps_schema_valid_array():
+    from ragas.metrics._faithfulness import _statements_output_parser
+
+    payload = _parse_ragas_payload(
+        '{"analysis":[{"sentence_index":0,"simpler_statements":["A claim."]}]}',
+        _statements_output_parser.pydantic_object,
+    )
+
+    assert payload == [{"sentence_index": 0, "simpler_statements": ["A claim."]}]
+
+
+def test_ragas_parser_unwraps_deeply_nested_schema_valid_array():
+    from ragas.metrics._faithfulness import _faithfulness_output_parser
+
+    payload = _parse_ragas_payload(
+        '{"analysis":{"statements":[{"statement":"A.","reason":"Supported.","verdict":1}]}}',
+        _faithfulness_output_parser.pydantic_object,
+    )
+
+    assert payload[0]["verdict"] == 1
+
+
+def test_ragas_parser_wraps_one_valid_array_item():
+    from ragas.metrics._faithfulness import _faithfulness_output_parser
+
+    payload = _parse_ragas_payload(
+        '{"statement":"A.","reason":"Supported.","verdict":1}',
+        _faithfulness_output_parser.pydantic_object,
+    )
+
+    assert payload == [
+        {"statement": "A.", "reason": "Supported.", "verdict": 1}
+    ]
+
+
+def test_ragas_parser_wraps_one_valid_array_item_inside_wrapper():
+    from ragas.metrics._faithfulness import _faithfulness_output_parser
+
+    payload = _parse_ragas_payload(
+        '{"analysis":{"statement":"A.","reason":"Supported.","verdict":1}}',
+        _faithfulness_output_parser.pydantic_object,
+    )
+
+    assert payload[0]["statement"] == "A."
+
+
+def test_ragas_parser_skips_schema_invalid_json_before_valid_payload():
+    payload = _parse_ragas_payload(
+        '{"analysis":[]}\n{"question":"Recovered?","noncommittal":0}',
+        _AnswerSchema,
+    )
+
+    assert payload == {"question": "Recovered?", "noncommittal": 0}
 
 
 def test_ragas_schema_guard_repairs_schema_invalid_json_once():
@@ -248,3 +330,76 @@ def test_faithfulness_batches_bound_per_call_output_size():
         [4, 5, 6, 7],
         [8, 9, 10],
     ]
+
+
+def test_chunked_faithfulness_uses_normalized_sentences_as_claims(monkeypatch):
+    from evaluation.ragas_evaluator import _chunked_faithfulness_ascore
+
+    class Segmenter:
+        def segment(self, answer):
+            return ["First claim.", "Second claim."]
+
+    class Parsed:
+        def dicts(self):
+            return [
+                {"statement": "First claim.", "reason": "supported", "verdict": 1},
+                {"statement": "Second claim.", "reason": "supported", "verdict": 1},
+            ]
+
+    class LLM:
+        calls = 0
+
+        async def generate(self, prompt, **kwargs):
+            self.calls += 1
+            return SimpleNamespace(generations=[[SimpleNamespace(text="[]")]])
+
+    metric = SimpleNamespace(
+        llm=LLM(),
+        sentence_segmenter=Segmenter(),
+        _reproducibility=1,
+        max_retries=0,
+        _create_nli_prompt=lambda row, statements: SimpleNamespace(
+            to_string=lambda: str(statements)
+        ),
+    )
+    from ragas.metrics import _faithfulness
+
+    async def parse(*args, **kwargs):
+        return Parsed()
+
+    monkeypatch.setattr(
+        type(_faithfulness._faithfulness_output_parser), "aparse", parse
+    )
+    score = asyncio.run(
+        _chunked_faithfulness_ascore(
+            metric,
+            {"question": "Q?", "answer": "First claim. Second claim.", "contexts": ["C"]},
+            None,
+        )
+    )
+
+    assert score == 1.0
+    assert metric.llm.calls == 2
+
+
+def test_evaluate_with_ragas_surfaces_worker_failures(monkeypatch):
+    import ragas
+
+    from evaluation.ragas_evaluator import evaluate_with_ragas
+
+    captured = {}
+
+    def fail_evaluate(*args, **kwargs):
+        captured.update(kwargs)
+        raise RuntimeError("judge output was invalid")
+
+    monkeypatch.setattr(ragas, "evaluate", fail_evaluate)
+    with pytest.raises(RuntimeError, match="judge output was invalid"):
+        evaluate_with_ragas(
+            [{"id": "q1", "question": "Q?", "answer": "A.", "contexts": ["C."]}],
+            llm=SimpleNamespace(),
+            embeddings=SimpleNamespace(),
+            metric_names=["faithfulness"],
+        )
+
+    assert captured["raise_exceptions"] is True

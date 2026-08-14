@@ -20,7 +20,7 @@ def test_three_packing_modes_preserve_per_chunk_citations():
     gold = _chunk("gold", "gold evidence")
     previous = _chunk("previous", "preceding evidence")
     following = _chunk("following", "following evidence")
-    other_section = _chunk("other", "other section evidence", section="results")
+    other_section = _chunk("other", "cross-section adjacent evidence", section="results")
     concepts = ["mechanism one", "mechanism two"]
 
     adjacent = ContextAssembler(
@@ -36,6 +36,7 @@ def test_three_packing_modes_preserve_per_chunk_citations():
         "gold",
         "previous",
         "following",
+        "other",
     ]
     assert [source.chunk_id for source in section.citation_map.values()] == [
         "gold",
@@ -43,6 +44,21 @@ def test_three_packing_modes_preserve_per_chunk_citations():
         "following",
     ]
     assert '[2]' in adjacent.context_block and '"preceding evidence"' in adjacent.context_block
+
+
+def test_section_packing_excludes_other_sections():
+    gold = _chunk("gold", "gold evidence")
+    same_section = _chunk("same", "same-section evidence")
+    other_section = _chunk("other", "other-section evidence", section="results")
+    assembled = ContextAssembler(
+        evidence_packing_mode="section",
+        section_chunk_lookup=lambda chunk: [same_section, other_section],
+    ).assemble([gold], required_concepts=["one", "two"])
+
+    assert [source.chunk_id for source in assembled.citation_map.values()] == [
+        "gold",
+        "same",
+    ]
 
 
 def test_single_concept_keeps_gold_only_even_when_expansion_is_configured():

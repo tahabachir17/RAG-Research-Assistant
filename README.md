@@ -361,3 +361,35 @@ Rebuild and audit the evidence-aligned candidate set after replacing the BM25 ar
 The bootstrapper guarantees that frozen chunks exist and belong to the declared source paper. It deliberately leaves every record `reviewed=false`; human review and calibration labels are still required before release gating.
 
 **Part 8 summary:** generation is now a self-contained, provider-neutral layer with finish metadata, deterministic runtime validation, one bounded repair attempt, and an independent offline quality evaluator. The immediate next step is human review of the 20 candidate questions plus 5â€“10 calibration cases, followed by the first real cross-model run; until then, release-gate quality remains unmeasured.
+# Part 9c — RAGAS Evaluation-Layer Remediation (2026-08-13)
+
+| File | Purpose |
+| --- | --- |
+| `reports/part9c_phase0_audit.md` | Audit-before-edit status, evidence, and root causes. |
+| `reports/part9c_latency_report.md` | 75-question latency percentiles and reranker mitigation recommendation. |
+| `evaluation/data/eval_results/part9c_20260813/reranker_profile.json` | Per-query candidate-k 10/20 latency and Recall@4 artifact. |
+
+Part 9c adds fail-fast populated-Qdrant preflight, Groq JSON Object Mode with
+schema validation and truncation-aware token-cap escalation, resumable
+per-question metric evaluation, and an evidence-based MMR small-k guard. The
+upstream-unanswerable `qasper-bf0080...` row and evidence-free SciDQA export are
+documented as non-score-blocking corpus limitations. The full 75-question RAGAS
+result is reported separately when all external judge calls complete; diagnostic
+or partial values are not presented as final metrics.
+
+## Controlled generation benchmark
+
+Evaluate generation separately from retrieval using the 12 reviewed questions
+and their frozen gold chunks:
+
+```powershell
+.\venv\Scripts\python.exe -m evaluation.run_controlled_generation_ragas --run-id controlled_generation_ragas
+```
+
+The normal Groq `llama-3.3-70b-versatile` generator answers from the exact gold
+evidence. RAGAS scores faithfulness, answer relevancy, context precision,
+context recall, and answer correctness with Gemini 3.5 Flash Lite. A failed or
+missing Gemini metric call falls back to Groq `llama-3.1-8b-instant`; a low
+Gemini score never triggers fallback. The run checkpoints answers and metric
+calls under `evaluation/data/eval_results/<run-id>` and can be resumed with the
+same command.

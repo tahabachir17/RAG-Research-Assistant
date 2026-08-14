@@ -60,6 +60,7 @@ def assemble_evaluation_questions(
     manual_limit: int | None = None,
     qasa_limit: int | None = None,
     qasper_limit: int | None = None,
+    reviewed_external_only: bool = False,
 ) -> list[GenerationGoldenQuestion]:
     """Merge manual, QASA, and QASPER inputs and explicitly skip empty SciDQA."""
 
@@ -75,6 +76,8 @@ def assemble_evaluation_questions(
     tiers: list[GenerationGoldenQuestion] = []
     for name, limit in (("qasa", qasa_limit), ("qasper", qasper_limit)):
         rows = load_generation_golden(directory / f"{name}_generation_qa.json")
+        if reviewed_external_only:
+            rows = [row for row in rows if row.reviewed and row.reference_context_ids]
         tiers.extend(
             replace(
                 row,
@@ -124,14 +127,25 @@ def retrieve_external_contexts(
 class TieredChunkLookup:
     """Resolve IDs from production and external indexes without mixing searches."""
 
+    _EXCLUDED_ADJACENT_SECTIONS = {
+        "front_matter",
+        "references",
+        "bibliography",
+        "acknowledgements",
+        "acknowledgments",
+    }
+
     def __init__(self, *indexes: BM25Indexer) -> None:
         self._chunks: dict[str, dict[str, Any]] = {}
+        self._paper_chunk_ids: dict[str, list[str]] = {}
         for index in indexes:
             for chunk in index.chunks:
                 identifier = str(chunk.get("chunk_id", ""))
                 if identifier in self._chunks and self._chunks[identifier] != chunk:
                     raise ValueError(f"chunk id collision across indexes: {identifier}")
                 self._chunks[identifier] = dict(chunk)
+                paper_id = str(chunk.get("paper_id", ""))
+                self._paper_chunk_ids.setdefault(paper_id, []).append(identifier)
 
     def __call__(self, chunk_ids: list[str]) -> list[RetrievalResult]:
         missing = [item for item in chunk_ids if item not in self._chunks]
@@ -141,6 +155,35 @@ class TieredChunkLookup:
             RetrievalResult.from_payload(self._chunks[item], score=0.0, source="frozen")
             for item in chunk_ids
         ]
+
+    def adjacent_chunks(self, chunk: RetrievalResult) -> list[RetrievalResult]:
+        """Return immediate same-paper neighbors in production chunk order."""
+
+        chunk_ids = self._paper_chunk_ids.get(chunk.paper_id or "", [])
+        try:
+            position = chunk_ids.index(chunk.chunk_id)
+        except ValueError:
+            return []
+        neighbor_ids = chunk_ids[max(0, position - 1) : position]
+        neighbor_ids += chunk_ids[position + 1 : position + 2]
+        neighbor_ids = [
+            identifier
+            for identifier in neighbor_ids
+            if str(self._chunks[identifier].get("section", "")).casefold()
+            not in self._EXCLUDED_ADJACENT_SECTIONS
+        ]
+        return self(neighbor_ids)
+
+    def section_chunks(self, chunk: RetrievalResult) -> list[RetrievalResult]:
+        """Return all same-paper chunks from the same normalized section."""
+
+        return self(
+            [
+                identifier
+                for identifier in self._paper_chunk_ids.get(chunk.paper_id or "", [])
+                if str(self._chunks[identifier].get("section", "")) == chunk.section
+            ]
+        )
 
 
 @dataclass(slots=True)
@@ -184,6 +227,8 @@ class MetricJsonlCache:
         status: str,
         value: float | None = None,
         reason: str | None = None,
+        judge_provider: str | None = None,
+        judge_model: str | None = None,
     ) -> None:
         if status not in {"completed", "unavailable", "failed"}:
             raise ValueError(f"invalid cache status: {status}")
@@ -193,6 +238,8 @@ class MetricJsonlCache:
             "status": status,
             "value": value,
             "reason": reason,
+            "judge_provider": judge_provider,
+            "judge_model": judge_model,
         }
         with self._lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)

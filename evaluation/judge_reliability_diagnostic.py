@@ -99,6 +99,14 @@ def run_judge_diagnostic(args: argparse.Namespace) -> dict[str, Any]:
 
     report = json.loads(Path(args.smoke_report).read_text(encoding="utf-8"))
     anomalies = smoke_anomalies(report)
+    if args.question_id:
+        anomalies = [
+            row for row in anomalies if row["question_id"] == args.question_id
+        ]
+    if args.metric:
+        anomalies = [row for row in anomalies if row["metric"] == args.metric]
+    if not anomalies:
+        raise ValueError("no matching judge anomalies were found")
     production = BM25Indexer.load(args.production_index)
     external = BM25Indexer.load(args.external_index)
     lookup = TieredChunkLookup(production, external)
@@ -300,6 +308,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--output", type=Path, default=Path("evaluation/data/eval_results/retrieval_stack_diagnostic_20260812/judge_reliability.json"))
     parser.add_argument("--judge-max-tokens", type=int, default=2048)
+    parser.add_argument("--question-id", help="Run only one anomalous question ID")
+    parser.add_argument("--metric", help="Run only one anomalous metric")
     parser.add_argument("--log-level", choices=("DEBUG", "INFO", "WARNING", "ERROR"), default="INFO")
     return parser
 
