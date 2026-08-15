@@ -24,6 +24,34 @@ def test_extract_named_papers_handles_quote_styles_and_deduplicates():
     assert is_multi_paper_question(question) is True
 
 
+def test_unquoted_known_titles_are_detected_in_mention_order():
+    known = {
+        "Quasi-Recurrent Neural Networks",
+        "Neural Enquirer: Learning to Query Tables with Natural Language",
+        "Neural Symbolic Machines: Learning Semantic Parsers on Freebase with Weak Supervision",
+    }
+    question = (
+        "Compare Quasi-Recurrent Neural Networks, Neural Enquirer: Learning to "
+        "Query Tables with Natural Language, and Neural Symbolic Machines: "
+        "Learning Semantic Parsers on Freebase with Weak Supervision."
+    )
+
+    assert extract_named_papers(question, known) == [
+        "Quasi-Recurrent Neural Networks",
+        "Neural Enquirer: Learning to Query Tables with Natural Language",
+        "Neural Symbolic Machines: Learning Semantic Parsers on Freebase with Weak Supervision",
+    ]
+    assert is_multi_paper_question(question, known)
+
+
+def test_known_title_match_prefers_long_title_over_embedded_short_title():
+    question = "Compare Neural Symbolic Machines Extended and Paper B."
+
+    assert extract_named_papers(
+        question, {"Neural Symbolic Machines", "Neural Symbolic Machines Extended", "Paper B"}
+    ) == ["Neural Symbolic Machines Extended", "Paper B"]
+
+
 def test_entity_retrieval_filters_wrong_papers_and_balances_named_evidence():
     calls: list[tuple[str, int, int]] = []
 
@@ -66,3 +94,25 @@ def test_entity_retrieval_reports_a_named_paper_without_matching_evidence():
     assert [result.chunk_id for result in ranked] == ["a1"]
     assert reports[0].hit is True
     assert reports[1].hit is False
+
+
+def test_unquoted_entity_queries_remove_other_known_titles():
+    known = {"Paper A", "Paper B"}
+    calls: list[str] = []
+
+    class Retriever:
+        def search(self, query, **kwargs):
+            calls.append(query)
+            title = "Paper A" if query.startswith('"Paper A"') else "Paper B"
+            return [_result(title[-1].casefold(), title)]
+
+    retrieve_per_entity(
+        "Compare Paper A and Paper B on training.",
+        "unused.pkl",
+        retriever=Retriever(),
+        known_titles=known,
+        include_general_query=False,
+    )
+
+    assert calls[0].startswith('"Paper A"') and "Paper B" not in calls[0]
+    assert calls[1].startswith('"Paper B"') and "Paper A" not in calls[1]

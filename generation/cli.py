@@ -63,8 +63,9 @@ try:
         build_faithfulness_verifier,
     )
     from .llm_client import LLMClient, build_llm_client
-    from .entities import extract_named_papers, is_multi_paper_question
+    from .entities import is_multi_paper_question
     from .prompt_manager import (
+        QUESTION_TYPE_INSTRUCTIONS,
         PromptManager,
         compound_question_instruction,
         question_type_instruction,
@@ -83,8 +84,9 @@ except ImportError:
     from context_assembler import ContextAssembler
     from faithfulness_verifier import FaithfulnessVerifier, build_faithfulness_verifier
     from llm_client import LLMClient, build_llm_client
-    from entities import extract_named_papers, is_multi_paper_question
+    from entities import is_multi_paper_question
     from prompt_manager import (
+        QUESTION_TYPE_INSTRUCTIONS,
         PromptManager,
         compound_question_instruction,
         question_type_instruction,
@@ -131,6 +133,22 @@ class OfflineDemoClient:
         return tokens()
 
 
+def comparison_coverage_instruction(named_papers: Sequence[str]) -> str:
+    """Require partial, paper-by-paper answers instead of global abstention."""
+
+    listed = "; ".join(named_papers)
+    return (
+        "This is a multi-paper comparison. Return exactly one item for each "
+        f"of these papers, in this order: {listed}. Preserve the paper title "
+        "in its paper field. If a paper has no supporting passages in the "
+        "context, still include its item and set every evidence field to "
+        '"No evidence retrieved for this paper." with empty citations for '
+        "that item. Use answer_status=insufficient_evidence only if none of "
+        "the listed papers has supporting evidence; never abstain merely "
+        "because one paper lacks evidence."
+    )
+
+
 def run_generation(
     question: str,
     ranked_results: Sequence[RetrievalResult],
@@ -149,6 +167,7 @@ def run_generation(
     evidence_packing_mode: str = "gold",
     adjacent_chunk_lookup: Any | None = None,
     section_chunk_lookup: Any | None = None,
+    named_papers: Sequence[str] = (),
 ) -> GeneratedAnswer:
     """Run generation through deterministic validation and one repair attempt."""
 
@@ -161,16 +180,26 @@ def run_generation(
     ).assemble(ranked_results, required_concepts=required_concepts)
     if not context.citation_map:
         raise ValueError("No complete retrieval chunk fits in the context budget")
+    named_papers = tuple(named_papers)
+    is_comparison = len(named_papers) >= 2
+    type_instruction = (
+        f"Question type: comparison. {QUESTION_TYPE_INSTRUCTIONS['comparison']}"
+        if is_comparison
+        else question_type_instruction(question)
+    )
     system, user = PromptManager().render(
         template_name,
         context=context.context_block,
         question=question,
-        question_type_instruction=question_type_instruction(question),
-        named_papers=", ".join(extract_named_papers(question)) or "none",
+        question_type_instruction=type_instruction,
+        named_papers=", ".join(named_papers) or "none",
     )
-    compound_instruction = compound_question_instruction(question)
-    if compound_instruction:
-        user = user + "\n\n" + compound_instruction
+    if is_comparison:
+        user = user + "\n\n" + comparison_coverage_instruction(named_papers)
+    else:
+        compound_instruction = compound_question_instruction(question)
+        if compound_instruction:
+            user = user + "\n\n" + compound_instruction
     response_parser = None
     if required_fields:
         user = user + "\n\n" + structured_answer_instruction(

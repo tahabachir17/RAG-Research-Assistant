@@ -148,6 +148,8 @@ def structured_answer_instruction(
         "evidence about different methods. If support is absent or ambiguous, use exactly "
         '"Not reported in the supplied passages." with an empty citations array; keep a row '
         "when it is required to identify a named paper even if all evidence fields are absent. "
+        'For a named paper with no retrieved passages at all, "No evidence retrieved for '
+        'this paper." is also an absent value and must have an empty citations array. '
         f'The "items" array may contain{limit} items. '
         "Every item must contain exactly the requested fields. Every factual value "
         "must be an object with text and citations. citations must contain only the "
@@ -298,7 +300,9 @@ def _merge_integer_lists(left: str, right: str) -> str:
 
 def _is_absent(text: str) -> bool:
     normalized = " ".join(text.casefold().split())
-    return normalized.startswith("not reported") or normalized.startswith("not provided")
+    return normalized.startswith(
+        ("not reported", "not provided", "no evidence retrieved")
+    )
 
 
 def _rows_are_near_duplicates(

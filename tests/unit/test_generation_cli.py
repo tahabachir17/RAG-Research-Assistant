@@ -8,6 +8,7 @@ from generation.citation_handler import ClaimSupportFlag
 from generation.cli import (
     add_retrieved_evidence,
     build_evidence_queries,
+    comparison_coverage_instruction,
     diversify_ranked_results,
     fuse_query_results,
     load_ranked_results,
@@ -27,6 +28,14 @@ def test_offline_generation_harness_returns_resolved_source():
     assert response.sources[0]["paper_id"] == "1706.03762"
     assert response.sources[0]["chunk_id"] == "demo-transformer-method"
     assert response.answer == "The supplied context describes scaled dot-product attention. [1]"
+
+
+def test_comparison_coverage_allows_partial_evidence_without_global_abstention():
+    instruction = comparison_coverage_instruction(["Paper A", "Paper B"])
+
+    assert "Paper A; Paper B" in instruction
+    assert "exactly one item for each" in instruction
+    assert "never abstain merely because one paper lacks evidence" in instruction
 
 
 def test_cli_defaults_to_hybrid_retrieval():

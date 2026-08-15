@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from threading import RLock
 from typing import Any, Callable, Iterable
 
 from .models import RetrievalResult
@@ -50,6 +51,7 @@ class CorpusEnrichmentRetriever:
         self.min_score = min_score
         self.relevance_gate = relevance_gate
         self.last_enrichment: dict[str, Any] | None = None
+        self._enrichment_lock = RLock()
 
     def search(self, query: str, **kwargs: Any) -> list[RetrievalResult]:
         initial = self.retriever.search(query, **kwargs)
@@ -57,9 +59,31 @@ class CorpusEnrichmentRetriever:
             self.last_enrichment = None
             return initial
 
-        papers = self.discovery.search(
-            query=query, max_results=self.max_discovery_results
-        )
+        with self._enrichment_lock:
+            return self._enrich_locked(query, initial=initial, **kwargs)
+
+    def enrich(
+        self,
+        query: str,
+        *,
+        initial: list[RetrievalResult] | None = None,
+        **kwargs: Any,
+    ) -> list[RetrievalResult]:
+        """Force one serialized discover/index/retry transaction."""
+
+        with self._enrichment_lock:
+            return self._enrich_locked(query, initial=initial, **kwargs)
+
+    def _enrich_locked(
+        self,
+        query: str,
+        *,
+        initial: list[RetrievalResult] | None = None,
+        **kwargs: Any,
+    ) -> list[RetrievalResult]:
+        if initial is None:
+            initial = self.retriever.search(query, **kwargs)
+        papers = self.discovery.search(query=query, max_results=self.max_discovery_results)
         if not papers:
             self.last_enrichment = {"discovered": 0, "reason": "no papers discovered"}
             return initial

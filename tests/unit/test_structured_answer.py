@@ -98,6 +98,23 @@ def test_comparison_row_allows_uncited_paper_identity_with_absent_evidence():
     assert structured["items"][0]["paper"]["citations"] == []
 
 
+def test_comparison_row_accepts_no_retrieved_evidence_placeholder():
+    raw = (
+        '{"items":[{"paper":{"text":"Paper B","citations":[]},'
+        '"method":{"text":"No evidence retrieved for this paper.","citations":[]}}]}'
+    )
+
+    rendered, _ = parse_and_render_structured_answer(
+        raw,
+        required_fields=["paper", "method"],
+        valid_citations={1},
+        max_items=1,
+        exact_items=True,
+    )
+
+    assert "No evidence retrieved for this paper." in rendered
+
+
 def test_exact_item_contract_rejects_an_incomplete_comparison():
     raw = '{"items":[{"paper":{"text":"Paper A","citations":[]}}]}'
 

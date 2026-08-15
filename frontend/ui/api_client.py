@@ -9,7 +9,7 @@ import requests
 import streamlit as st
 
 API_URL = os.getenv("API_URL", "http://localhost:8000").rstrip("/")
-REQUEST_TIMEOUT_SECONDS = 15
+REQUEST_TIMEOUT_SECONDS = float(os.getenv("FRONTEND_REQUEST_TIMEOUT_SECONDS", "600"))
 
 
 class APIClientError(RuntimeError):

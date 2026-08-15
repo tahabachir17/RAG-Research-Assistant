@@ -1,12 +1,15 @@
 """Single-turn retrieval-augmented chat endpoint."""
 
+import logging
 import time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.dependencies import (
+    get_corpus_enrichment_retriever,
     get_faithfulness_verifier,
+    get_known_paper_titles,
     get_llm,
     get_reranker,
     get_retriever,
@@ -24,8 +27,10 @@ from generation.entities import extract_named_papers
 from generation.faithfulness_verifier import FaithfulnessVerifier
 from generation.llm_client import LLMClient, LLMClientError
 from generation.query_decomposition import retrieve_per_entity
+from retrieval.fallback_retriever import CorpusEnrichmentRetriever
 
 router = APIRouter(tags=["chat"])
+logger = logging.getLogger(__name__)
 
 
 class ChatResponse(BaseChatResponse):
@@ -47,9 +52,16 @@ def chat(
         FaithfulnessVerifier | None, Depends(get_faithfulness_verifier)
     ] = None,
     settings: Annotated[Settings, Depends(get_settings)] = None,
+    known_titles: Annotated[
+        frozenset[str], Depends(get_known_paper_titles)
+    ] = frozenset(),
+    enrichment: Annotated[
+        CorpusEnrichmentRetriever | None,
+        Depends(get_corpus_enrichment_retriever),
+    ] = None,
 ) -> ChatResponse:
     started_at = time.monotonic()
-    named_papers = extract_named_papers(request.question)
+    named_papers = extract_named_papers(request.question, known_titles)
     is_comparison = len(named_papers) >= 2
     missing_evidence: list[str] = []
     try:
@@ -59,6 +71,7 @@ def chat(
                 request.question,
                 str(settings.BM25_INDEX_PATH),
                 retriever=retriever,
+                known_titles=known_titles,
                 per_entity_top_k=max(4, request.top_k),
                 candidate_k=max(30, settings.HYBRID_TOP_K),
                 reranker=reranker,
@@ -69,7 +82,12 @@ def chat(
             generation_options = {
                 "template_name": "compare_prompt",
                 "required_fields": [
-                    "paper", "problem", "method", "evaluation", "limitations"
+                    "paper",
+                    "core_architecture",
+                    "sequential_reasoning",
+                    "training",
+                    "main_advantage",
+                    "limitations",
                 ],
                 "max_items": len(named_papers),
                 "exact_items": True,
@@ -91,8 +109,59 @@ def chat(
             llm=llm,
             faithfulness_verifier=verifier,
             enable_faithfulness_verifier=verifier is not None,
+            named_papers=named_papers,
             **generation_options,
         )
+        if enrichment is not None and _is_abstention(generated):
+            initial_ranked = ranked
+            try:
+                enrichment.enrich(
+                    request.question,
+                    initial=ranked,
+                    top_k=request.top_k,
+                    candidate_top_k=max(request.top_k, settings.HYBRID_TOP_K),
+                )
+                get_known_paper_titles.cache_clear()
+                if is_comparison:
+                    ranked, entity_reports = retrieve_per_entity(
+                        request.question,
+                        str(settings.BM25_INDEX_PATH),
+                        retriever=retriever,
+                        known_titles=known_titles,
+                        per_entity_top_k=max(4, request.top_k),
+                        candidate_k=max(30, settings.HYBRID_TOP_K),
+                        reranker=reranker,
+                    )
+                    missing_evidence = [
+                        report.title for report in entity_reports if not report.hit
+                    ]
+                else:
+                    ranked = retrieve_ranked_results(
+                        request.question,
+                        settings.BM25_INDEX_PATH,
+                        top_k=request.top_k,
+                        candidate_k=max(request.top_k, settings.HYBRID_TOP_K),
+                        reranker=reranker,
+                        retriever=retriever,
+                    )
+                retried = run_generation(
+                    request.question,
+                    ranked,
+                    llm=llm,
+                    faithfulness_verifier=verifier,
+                    enable_faithfulness_verifier=verifier is not None,
+                    named_papers=named_papers,
+                    **generation_options,
+                )
+                if not _is_abstention(retried):
+                    generated = retried
+                else:
+                    ranked = initial_ranked
+            except Exception:
+                # Enrichment is a best-effort last resort; preserve the valid
+                # initial abstention if discovery, download, or indexing fails.
+                ranked = initial_ranked
+                logger.exception("Corpus enrichment failed for live chat")
         answered_by = _answered_by(llm)
     except LLMClientError as exc:
         raise HTTPException(
@@ -152,6 +221,15 @@ def _looks_like_provider_failure(exc: Exception) -> bool:
         marker in module or marker in name
         for marker in ("groq", "openai", "anthropic", "ollama", "timeout", "connection")
     )
+
+
+def _is_abstention(generated: object) -> bool:
+    structured = getattr(generated, "structured_data", None)
+    if isinstance(structured, dict):
+        status_value = str(structured.get("answer_status", "")).casefold()
+        if status_value == "insufficient_evidence":
+            return True
+    return not bool(getattr(generated, "sources", None))
 
 
 def _answered_by(llm: LLMClient) -> str:

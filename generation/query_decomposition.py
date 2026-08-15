@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Collection
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,13 +30,14 @@ def retrieve_per_entity(
     index_path: str,
     *,
     retriever: Any,
+    known_titles: Iterable[str] | None = None,
     per_entity_top_k: int = 4,
     candidate_k: int = 30,
     reranker: Any | None = None,
     excluded_sections: Collection[str] | None = None,
     include_general_query: bool = True,
 ) -> tuple[list[RetrievalResult], list[EntityRetrievalReport]]:
-    """Retrieve and round-robin evidence for every quoted paper title.
+    """Retrieve and round-robin evidence for every named paper title.
 
     Entity searches are filtered by result title before diversification. This
     prevents a strong result for one paper from consuming another paper's quota.
@@ -44,16 +45,16 @@ def retrieve_per_entity(
 
     from .cli import DEFAULT_EXCLUDED_SECTIONS, retrieve_ranked_results
 
-    titles = extract_named_papers(question)
+    titles = extract_named_papers(question, known_titles)
     if len(titles) < 2:
-        raise ValueError("entity-aware retrieval requires at least two quoted titles")
+        raise ValueError("entity-aware retrieval requires at least two named titles")
     if excluded_sections is None:
         excluded_sections = DEFAULT_EXCLUDED_SECTIONS
 
     entity_rankings: list[list[RetrievalResult]] = []
     reports: list[EntityRetrievalReport] = []
     for title in titles:
-        entity_query = _entity_query(question, title)
+        entity_query = _entity_query(question, title, titles)
         try:
             ranking = retrieve_ranked_results(
                 entity_query,
@@ -104,12 +105,11 @@ def retrieve_per_entity(
     return balanced, reports
 
 
-def _entity_query(question: str, title: str) -> str:
-    focus = re.sub(
-        r"'[^'\n]+'|\"[^\"\n]+\"|‘[^’\n]+’|“[^”\n]+”",
-        " ",
-        question,
-    )
+def _entity_query(question: str, title: str, named_titles: list[str]) -> str:
+    focus = question
+    for other_title in named_titles:
+        if other_title != title:
+            focus = re.sub(re.escape(other_title), " ", focus, flags=re.IGNORECASE)
     focus = re.sub(r"\s+", " ", focus).strip(" ,;:")
     return f'"{title}" {focus}'.strip()
 

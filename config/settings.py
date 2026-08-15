@@ -19,6 +19,8 @@ class Settings(BaseSettings):
     LLM_TEMPERATURE: float = Field(default=0.0, ge=0.0, le=2.0)
     LLM_REQUEST_TIMEOUT_SECONDS: float = Field(default=20.0, gt=0.0, le=120.0)
     LLM_TRANSPORT_MAX_RETRIES: int = Field(default=0, ge=0, le=2)
+    LLM_RATE_LIMIT_MAX_WAIT_SECONDS: float = Field(default=115.0, ge=0.0)
+    LLM_RATE_LIMIT_DEFAULT_WAIT_SECONDS: float = Field(default=5.0, gt=0.0)
     GENERATION_MAX_RETRIES: int = Field(default=1, ge=0, le=1)
     ENABLE_FAITHFULNESS_VERIFIER: bool = True
     FAITHFULNESS_VERIFIER_PROVIDER: str = "groq"
@@ -63,3 +65,6 @@ class Settings(BaseSettings):
     API_PORT: int = 8000
     FRONTEND_ORIGIN: str = "http://localhost:8501"
     RATE_LIMIT_RPM: int = 60
+    ENABLE_CORPUS_ENRICHMENT: bool = True
+    CORPUS_ENRICHMENT_MAX_RESULTS: int = Field(default=2, ge=1, le=10)
+    DISCOVERY_PROVIDER: str = "auto"
