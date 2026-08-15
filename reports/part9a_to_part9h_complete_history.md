@@ -2,7 +2,7 @@
 
 Date consolidated: 2026-08-14  
 Repository: `RAG-AI_Reasearch_Papers`  
-Current decision: **NO-GO for the three-run controlled-generation protocol**
+Current decision: **Part 9j complete; NO-GO for treating single-run RAGAS deltas or the controlled configuration as release-stable**
 
 ## 1. Purpose and provenance
 
@@ -79,12 +79,18 @@ The most important findings are:
   second causal example for Video-02. The causal fragment therefore remains
   unchanged rather than being generalized from one sample.
 
-Current blocking state:
+Current blocking state after the Part 9i disposition decision:
 
-- **NSM-02:** genuine mechanism completeness gap remains open.
-- **Video-02:** genuine causal completeness gap remains open, but it is still a
-  single-example pattern and has not justified a causal prompt change.
-- **Three-run protocol:** not started.
+- **NSM-02:** accepted generation-variance limitation, not a blocking defect.
+  `part9h_nsm02_context_check.md` classifies the delivered context as Explicit;
+  two targeted regeneration attempts nevertheless omitted the task-reward
+  objective. No third mechanism-instruction change is authorized.
+- **Video-02:** accepted single-example causal-completeness limitation, not a
+  blocking defect. `part9h_video02_candidate_search.md` records that none of 20
+  candidates across QASA, QASPER, and the controlled set supplied a second
+  confirming example. The causal prompt fragment therefore remains unchanged.
+- **Three-run protocol:** not started; the Part 9i re-verification gate passed,
+  so the separately scoped protocol is now GO.
 
 ## 3. Evaluation architecture established across Parts 9a–9c
 
@@ -727,6 +733,8 @@ the latter changes only generation prompt behavior for mechanism questions.
 | `reports/part9h_omission_root_cause.md` | A/B classification of five remaining omissions and targeted tests. |
 | `reports/part9h_nsm02_context_check.md` | Explicit NSM task-reward/REINFORCE context proof. |
 | `reports/part9h_video02_candidate_search.md` | Twenty-question causal-candidate criteria table. |
+| `reports/part9i_single_pass_reverification.md` | Full post-disposition 12-question generation-only comparison and GO recommendation. |
+| `reports/part9j_three_run_protocol_analysis.md` | Three-run RAGAS/concept stability analysis and release conclusion. |
 
 Important machine-readable run directories:
 
@@ -740,6 +748,10 @@ Important machine-readable run directories:
 - `evaluation/data/eval_results/controlled_generation_part9f_single_pass_20260814/`
 - `evaluation/data/eval_results/controlled_generation_part9h_targeted_20260814/`
 - `evaluation/data/eval_results/controlled_generation_part9h_mechanism_retry_20260814/`
+- `evaluation/data/eval_results/controlled_generation_part9i_single_pass_20260814/`
+- `evaluation/data/eval_results/part9j_three_run_20260815_run1/`
+- `evaluation/data/eval_results/part9j_three_run_20260815_run2/`
+- `evaluation/data/eval_results/part9j_three_run_20260815_run3/`
 
 ## 17. Resolved, rejected, and open hypotheses
 
@@ -770,42 +782,78 @@ Important machine-readable run directories:
 - A synthetic second causal question.
 - Partial or single-run RAGAS correctness as sufficient evidence of improvement.
 
+### Accepted limitations
+
+1. **NSM-02:** accepted as generation variance rather than a blocking defect.
+   The context is Explicit (`part9h_nsm02_context_check.md`), but both targeted
+   regeneration attempts omitted the task-reward objective. No third
+   mechanism-instruction attempt will be made in Part 9i.
+2. **Video-02:** accepted as a single-example causal-completeness limitation.
+   The 20-candidate search across QASA, QASPER, and the controlled set found no
+   second confirming example (`part9h_video02_candidate_search.md`), so the
+   causal prompt fragment remains unchanged.
+
 ### Still open
 
-1. **NSM-02:** context explicitly states that REINFORCE directly optimizes task
-   reward, but repeated targeted answers omit that objective. A decision is
-   needed between a third narrowly authorized mechanism attempt and documenting
-   the miss as an accepted open limitation.
-2. **Video-02:** the answer omits incoherent fusion of temporally distinct events
-   and objects. No second real causal example currently supports changing the
-   causal fragment.
-3. **Enquirer-02 stochastic completeness:** the process-trace retry recovered
+1. **Enquirer-02 stochastic completeness:** the process-trace retry recovered
    layered state but omitted conditioned operations, leaving overall recall
    `0.75`. The original target omission is resolved, but the sample demonstrates
    remaining generation variability.
-4. **External retrieval:** QASPER remains weak, with most misses occurring before
+2. **External retrieval:** QASPER remains weak, with most misses occurring before
    reranking and some additional reranker demotions.
 
-## 18. Current go/no-go and next authorized decision
+## 18. Part 9i disposition and current protocol gate
 
-The current state is **NO-GO** for both:
+Part 9i accepts NSM-02 and Video-02 as documented limitations under the
+project's calibration rule. Neither item is an open blocker, and neither may be
+re-opened through a prompt, routing, evidence-packing, golden-set, or source-code
+change during the Part 9i run.
 
-- another full 12-question verification pass; and
-- the three-run controlled-generation protocol.
+The Part 9i re-verification completed all 12 questions with Groq
+`llama-3.3-70b-versatile`, frozen reviewed contexts with adjacent packing for
+mechanism questions, and no RAGAS or other LLM judge. Final alias-aware mean
+concept recall was `0.9306`, compared with the current Part 9g/9h baseline of
+`0.8889`. QRNN-01 was the only material mover (`+0.50`) and now includes the
+train/test scope. The remaining unmatched concepts were Enquirer-02's known
+variable layered state plus the accepted NSM-02 and Video-02 limitations.
 
-The next decision should be explicit and narrowly scoped:
-
-- either authorize a third NSM-02 mechanism-only attempt or accept/document the
-  NSM gap;
-- decide how long Video-02 should remain an isolated open causal limitation
-  while waiting for a real second example.
-
-Only after those findings are resolved or explicitly accepted should the system
-repeat the Part 9g-style full 12-question pass. If that pass is clean enough for
-the agreed standard, the separate three-run protocol can then proceed with:
+At the conclusion of Part 9i, the state was **GO for the separate three-run
+protocol**. When executed, it was required to retain the established
+requirements:
 
 - three full controlled generations;
 - per-question mean and spread;
 - RAGAS answer-correctness deltas cross-checked against deterministic
   concept-recall movement;
 - no prompt, routing, or evidence changes mid-protocol.
+
+## 19. Part 9i re-verification outcome
+
+The generation artifact is
+`evaluation/data/eval_results/controlled_generation_part9i_single_pass_20260814/report.json`;
+the complete comparison and evidence audit are in
+`reports/part9i_single_pass_reverification.md`. All 12 generations completed,
+every question records `judge_status: disabled`, and the artifact contains no
+generation errors. One evidence-confirmed Enquirer-02 alias was added during
+post-run deterministic rescoring and is documented with its `0.500` to `0.750`
+effect. No other golden, prompt, routing, packing, retrieval, or source-code
+change was made.
+
+## 20. Part 9j three-run protocol outcome
+
+All three independently checkpointed runs completed 12/12 generations and
+60/60 RAGAS values with zero judge fallbacks and zero errors. The frozen files
+remained unchanged. Pooled answer correctness was `0.5925`; the three run means
+were `0.6268`, `0.5390`, and `0.6117`. Fixed-matcher concept-recall means were
+`0.9306`, `0.8819`, and `0.8333`.
+
+Nine of 12 questions had at least one answer-correctness versus concept-recall
+direction mismatch. Exact-identical QRNN-01 and NSM-01 answers had correctness
+ranges of `0.25` and `0.60`, respectively. QRNN-02 also showed genuine
+mechanism-completeness instability; a manual audit separately found frozen
+substring-matcher false negatives for explicit Enquirer-02 paraphrases.
+
+The full analysis is `reports/part9j_three_run_protocol_analysis.md`. Its
+conclusion is **NO-GO for treating the current controlled configuration as
+release-stable or trusting single-run RAGAS correctness deltas**. Remediation is
+deferred to a separate task; NSM-02 and Video-02 remain accepted limitations.

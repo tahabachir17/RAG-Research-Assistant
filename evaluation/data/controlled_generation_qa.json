@@ -98,7 +98,8 @@
         {
           "concept": "operations conditioned on the query",
           "aliases": [
-            "semantic information of the original query, which is then sent to various executors"
+            "semantic information of the original query, which is then sent to various executors",
+            "each executor models a specific type of operation conditioned on the query"
           ]
         },
         {
@@ -111,7 +112,9 @@
           "concept": "end-to-end training from query-answer pairs",
           "aliases": [
             "end-to-end training using query-answer pairs",
-            "query-answer pairs, where the distributed representations of queries and the KB are optimized together with the query execution logic in an end-to-end fashion"
+            "query-answer pairs, where the distributed representations of queries and the KB are optimized together with the query execution logic in an end-to-end fashion",
+            "trained using query-answer pairs in an end-to-end fashion",
+            "trained using query-answer pairs, where the distributed representations of queries and the table are optimized together with the query execution logic in an end-to-end fashion"
           ]
         }
       ],

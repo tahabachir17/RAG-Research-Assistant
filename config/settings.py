@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     FAITHFULNESS_VERIFIER_MAX_TOKENS: int = Field(default=512, gt=0)
     ROUTER_PROVIDERS: str = "groq,gemini,lmstudio"
     GROQ_MODEL: str = "llama-3.3-70b-versatile"
+    GROQ_FALLBACK_MODEL: str = "llama-3.1-8b-instant"
     GEMINI_MODEL: str = "gemini-3.5-flash-lite"
     LMSTUDIO_MODEL: str = "qwen/qwen3-4b-2507"
     JUDGE_PROVIDER: str = "groq"
@@ -51,6 +52,7 @@ class Settings(BaseSettings):
     QDRANT_PORT: int = 6333
     QDRANT_COLLECTION: str = "ai_papers"
     QDRANT_PATH: str = "data/qdrant"
+    BM25_INDEX_PATH: str = "data/processed/bm25_index.pkl"
     DENSE_TOP_K: int = 50
     SPARSE_TOP_K: int = 50
     HYBRID_TOP_K: int = 20
@@ -59,4 +61,5 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 80
     API_HOST: str = "0.0.0.0"
     API_PORT: int = 8000
+    FRONTEND_ORIGIN: str = "http://localhost:8501"
     RATE_LIMIT_RPM: int = 60
