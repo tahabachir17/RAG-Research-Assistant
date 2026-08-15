@@ -20,8 +20,10 @@ from api.schemas import (
 )
 from config.settings import Settings
 from generation.cli import retrieve_ranked_results, run_generation
+from generation.entities import extract_named_papers
 from generation.faithfulness_verifier import FaithfulnessVerifier
 from generation.llm_client import LLMClient, LLMClientError
+from generation.query_decomposition import retrieve_per_entity
 
 router = APIRouter(tags=["chat"])
 
@@ -47,22 +49,49 @@ def chat(
     settings: Annotated[Settings, Depends(get_settings)] = None,
 ) -> ChatResponse:
     started_at = time.monotonic()
+    named_papers = extract_named_papers(request.question)
+    is_comparison = len(named_papers) >= 2
+    missing_evidence: list[str] = []
     try:
         reranker = get_reranker() if request.use_rerank else None
-        ranked = retrieve_ranked_results(
-            request.question,
-            settings.BM25_INDEX_PATH,
-            top_k=request.top_k,
-            candidate_k=max(request.top_k, settings.HYBRID_TOP_K),
-            reranker=reranker,
-            retriever=retriever,
-        )
+        if is_comparison:
+            ranked, entity_reports = retrieve_per_entity(
+                request.question,
+                str(settings.BM25_INDEX_PATH),
+                retriever=retriever,
+                per_entity_top_k=max(4, request.top_k),
+                candidate_k=max(30, settings.HYBRID_TOP_K),
+                reranker=reranker,
+            )
+            missing_evidence = [
+                report.title for report in entity_reports if not report.hit
+            ]
+            generation_options = {
+                "template_name": "compare_prompt",
+                "required_fields": [
+                    "paper", "problem", "method", "evaluation", "limitations"
+                ],
+                "max_items": len(named_papers),
+                "exact_items": True,
+                "max_context_tokens": 2500 * len(named_papers),
+            }
+        else:
+            ranked = retrieve_ranked_results(
+                request.question,
+                settings.BM25_INDEX_PATH,
+                top_k=request.top_k,
+                candidate_k=max(request.top_k, settings.HYBRID_TOP_K),
+                reranker=reranker,
+                retriever=retriever,
+            )
+            generation_options = {"max_context_tokens": 2500}
         generated = run_generation(
             request.question,
             ranked,
             llm=llm,
             faithfulness_verifier=verifier,
             enable_faithfulness_verifier=verifier is not None,
+            **generation_options,
         )
         answered_by = _answered_by(llm)
     except LLMClientError as exc:
@@ -111,6 +140,8 @@ def chat(
         latency_ms=max(0, round((time.monotonic() - started_at) * 1000)),
         used_rerank=request.use_rerank,
         answered_by=answered_by,
+        named_papers=named_papers,
+        papers_without_evidence=missing_evidence,
     )
 
 

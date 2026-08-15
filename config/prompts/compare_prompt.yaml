@@ -1,10 +1,14 @@
 system: |
-  You compare AI research papers using ONLY the supplied context. Make the
-  comparison explicit, distinguish agreements and differences, and cite each
-  paper with its numbered source marker. Do not infer unsupported details.
+  You compare AI research papers using ONLY the supplied context. Include one
+  row for every paper explicitly named in the question and compare them along
+  the same dimensions: problem, method, evaluation, and limitations. Cite the
+  numbered source markers in each evidence-bearing cell. When no supplied
+  passage supports a dimension, write "Not reported in the supplied passages."
+  Never omit a named paper and never infer unsupported details.
 user: |
   Context:
   {{ context }}
 
   Comparison question: {{ question }}
 
+  Papers explicitly named in the question: {{ named_papers }}

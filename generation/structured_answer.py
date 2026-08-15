@@ -111,9 +111,18 @@ def parse_and_render_structured_narrative(
     return rendered, structured
 
 
-def structured_answer_instruction(required_fields: Sequence[str], max_items: int | None) -> str:
+def structured_answer_instruction(
+    required_fields: Sequence[str],
+    max_items: int | None,
+    *,
+    exact_items: bool = False,
+) -> str:
     fields = [str(field).strip() for field in required_fields]
-    limit = f" at most {max_items}" if max_items is not None else ""
+    limit = (
+        f" exactly {max_items}" if exact_items and max_items is not None
+        else f" at most {max_items}" if max_items is not None
+        else ""
+    )
     example_fields = ", ".join(
         f'{json.dumps(field)}: {{"text": "concise evidence-grounded value", "citations": [1]}}'
         for field in fields
@@ -125,18 +134,20 @@ def structured_answer_instruction(required_fields: Sequence[str], max_items: int
         "requested item is supported, then return an empty items array and a concise summary. "
         "For answered responses, summary must be an empty string. Keep every factual "
         "text value to at most 18 words and make it a self-contained claim, not a vague label. "
-        "Each item must describe one central contribution of the paper named in the question. "
+        "Each item must describe one requested paper, subject, or one central contribution. "
         "Put the strongest and most direct answer in the first item. "
         "The item limit is a ceiling, not a target; return fewer items when the passages do "
-        "not support more distinct contributions. "
+        "not support more distinct contributions, unless an exact row count is required. "
         "Do not split one method or contribution into multiple rows. Every row must have a "
-        "different problem-method pair and a non-overlapping principal finding. Omit a row "
-        "when every requested field would be Not reported. "
+        "different identity or a non-overlapping principal finding. "
         "Do not present a baseline, related method, dataset, or generic research topic as a "
-        "separate contribution. Before writing a factual value, verify that its cited passages "
+        "separate contribution. A field named paper is an identity label copied from the "
+        "question and may use an empty citations array. Before writing any other factual "
+        "value, verify that its cited passages "
         "explicitly support that value for the same method or contribution. Do not combine "
         "evidence about different methods. If support is absent or ambiguous, use exactly "
-        '"Not reported in the supplied passages." with an empty citations array. '
+        '"Not reported in the supplied passages." with an empty citations array; keep a row '
+        "when it is required to identify a named paper even if all evidence fields are absent. "
         f'The "items" array may contain{limit} items. '
         "Every item must contain exactly the requested fields. Every factual value "
         "must be an object with text and citations. citations must contain only the "
@@ -153,6 +164,7 @@ def parse_and_render_structured_answer(
     required_fields: Sequence[str],
     valid_citations: set[int],
     max_items: int | None = None,
+    exact_items: bool = False,
 ) -> tuple[str, list[dict[str, Any]]]:
     failures: list[str] = []
     try:
@@ -176,6 +188,8 @@ def parse_and_render_structured_answer(
         failures.append("structured_abstention_missing_summary")
     if max_items is not None and len(items) > max_items:
         failures.append("too_many_items")
+    if exact_items and max_items is not None and len(items) != max_items:
+        failures.append("wrong_item_count")
     fields = [str(field).strip() for field in required_fields]
     normalized_rows: list[dict[str, Any]] = []
     for row_index, raw_row in enumerate(items, start=1):
@@ -204,7 +218,8 @@ def parse_and_render_structured_answer(
                 citations = list(dict.fromkeys(raw_citations))
             if any(value not in valid_citations for value in citations):
                 failures.append(f"structured_citation_out_of_range:{row_index}:{field}")
-            if cell_text and not _is_absent(cell_text) and not citations:
+            is_identity = field.casefold() == "paper"
+            if cell_text and not _is_absent(cell_text) and not citations and not is_identity:
                 failures.append(f"structured_field_uncited:{row_index}:{field}")
             if cell_text and not _is_absent(cell_text):
                 factual_values += 1

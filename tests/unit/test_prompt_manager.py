@@ -80,6 +80,12 @@ def test_detect_question_parts_does_not_split_simple_coordinated_nouns():
     assert compound_question_instruction("What is BM25?") == ""
 
 
+def test_detect_question_parts_does_not_split_quoted_paper_list():
+    question = "Compare 'Paper A' and 'Paper B' and explain their future work."
+
+    assert detect_question_parts(question) == [question.strip("?")]
+
+
 def test_compound_question_instruction_lists_each_detected_part():
     instruction = compound_question_instruction(
         "Which model is used? How was it evaluated?"

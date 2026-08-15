@@ -29,6 +29,10 @@ from generation.prompt_manager import (
         ("Why is a QRNN better than an LSTM?", "causes_evidence"),
         ("What are the limitations and future work?", "limitations_future_work"),
         ("Compare QRNNs and LSTMs.", "comparison"),
+        (
+            "Compare 'Paper A' and 'Paper B', including limitations and future work.",
+            "comparison",
+        ),
     ],
 )
 def test_question_type_classifier(question, expected):

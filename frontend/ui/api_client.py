@@ -26,14 +26,16 @@ def fetch_health() -> dict[str, Any] | None:
         return None
 
 
-def request_answer(question: str, *, use_rerank: bool) -> dict[str, Any]:
+def request_answer(
+    question: str, *, use_rerank: bool, top_k: int = 5
+) -> dict[str, Any]:
     try:
         response = requests.post(
             f"{API_URL}/chat",
             json={
                 "question": question.strip(),
                 "use_rerank": use_rerank,
-                "top_k": 5,
+                "top_k": top_k,
             },
             timeout=REQUEST_TIMEOUT_SECONDS,
         )

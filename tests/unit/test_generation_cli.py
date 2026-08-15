@@ -114,6 +114,24 @@ def test_harness_retrieves_new_question_from_local_index(monkeypatch, tmp_path):
     assert results == [expected]
 
 
+def test_candidate_limit_is_passed_to_hybrid_search(tmp_path):
+    result = RetrievalResult("c1", "evidence", 1.0, "hybrid")
+
+    class Retriever:
+        def search(self, query, top_k=None, *, candidate_top_k=None):
+            assert top_k == 30
+            assert candidate_top_k == 30
+            return [result]
+
+    assert retrieve_ranked_results(
+        "question",
+        tmp_path / "bm25.pkl",
+        top_k=5,
+        candidate_k=30,
+        retriever=Retriever(),
+    ) == [result]
+
+
 def test_retrieval_reranks_candidates_before_diversification(monkeypatch, tmp_path):
     first = RetrievalResult("c1", "first", 2.0, "sparse", paper_id="p1")
     second = RetrievalResult("c2", "second", 1.0, "sparse", paper_id="p2")

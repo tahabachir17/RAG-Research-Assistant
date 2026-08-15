@@ -80,6 +80,37 @@ def test_structured_answer_rejects_row_with_only_absent_values():
         )
 
 
+def test_comparison_row_allows_uncited_paper_identity_with_absent_evidence():
+    raw = (
+        '{"items":[{"paper":{"text":"Paper B","citations":[]},'
+        '"method":{"text":"Not reported in the supplied passages.","citations":[]}}]}'
+    )
+
+    rendered, structured = parse_and_render_structured_answer(
+        raw,
+        required_fields=["paper", "method"],
+        valid_citations={1},
+        max_items=1,
+        exact_items=True,
+    )
+
+    assert "Paper B" in rendered
+    assert structured["items"][0]["paper"]["citations"] == []
+
+
+def test_exact_item_contract_rejects_an_incomplete_comparison():
+    raw = '{"items":[{"paper":{"text":"Paper A","citations":[]}}]}'
+
+    with pytest.raises(StructuredAnswerError, match="wrong_item_count"):
+        parse_and_render_structured_answer(
+            raw,
+            required_fields=["paper"],
+            valid_citations={1},
+            max_items=2,
+            exact_items=True,
+        )
+
+
 def test_structured_answer_rejects_near_duplicate_rows():
     raw = '{"items":[{"method":{"text":"Scales adapter outputs with learned parameters","citations":[1]}},{"method":{"text":"Scales adapter outputs using learned parameters","citations":[1]}}]}'
     with pytest.raises(StructuredAnswerError, match="structured_items_duplicate:1:2"):

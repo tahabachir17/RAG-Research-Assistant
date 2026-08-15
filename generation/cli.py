@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import inspect
 import json
 import re
 import sys
@@ -62,6 +63,7 @@ try:
         build_faithfulness_verifier,
     )
     from .llm_client import LLMClient, build_llm_client
+    from .entities import extract_named_papers, is_multi_paper_question
     from .prompt_manager import (
         PromptManager,
         compound_question_instruction,
@@ -81,6 +83,7 @@ except ImportError:
     from context_assembler import ContextAssembler
     from faithfulness_verifier import FaithfulnessVerifier, build_faithfulness_verifier
     from llm_client import LLMClient, build_llm_client
+    from entities import extract_named_papers, is_multi_paper_question
     from prompt_manager import (
         PromptManager,
         compound_question_instruction,
@@ -134,10 +137,11 @@ def run_generation(
     *,
     llm: LLMClient | None = None,
     template_name: str = "qa_prompt",
-    max_context_tokens: int = 1000,
+    max_context_tokens: int = 2500,
     show_prompt: bool = False,
     required_fields: Sequence[str] = (),
     max_items: int | None = None,
+    exact_items: bool = False,
     max_retries: int | None = None,
     faithfulness_verifier: FaithfulnessVerifier | None = None,
     enable_faithfulness_verifier: bool | None = None,
@@ -162,13 +166,16 @@ def run_generation(
         context=context.context_block,
         question=question,
         question_type_instruction=question_type_instruction(question),
+        named_papers=", ".join(extract_named_papers(question)) or "none",
     )
     compound_instruction = compound_question_instruction(question)
     if compound_instruction:
         user = user + "\n\n" + compound_instruction
     response_parser = None
     if required_fields:
-        user = user + "\n\n" + structured_answer_instruction(required_fields, max_items)
+        user = user + "\n\n" + structured_answer_instruction(
+            required_fields, max_items, exact_items=exact_items
+        )
 
         def response_parser(text: str):
             return parse_and_render_structured_answer(
@@ -176,6 +183,7 @@ def run_generation(
                 required_fields=required_fields,
                 valid_citations=set(context.citation_map),
                 max_items=max_items,
+                exact_items=exact_items,
             )
     else:
         user = user + "\n\n" + structured_narrative_instruction()
@@ -460,6 +468,7 @@ def retrieve_ranked_results(
     reranker: Any | None = None,
     expand_evidence_queries: bool = False,
     retriever: Any | None = None,
+    result_filter: Any | None = None,
 ) -> list[RetrievalResult]:
     """Search broadly with hybrid retrieval, then select diverse evidence."""
 
@@ -473,9 +482,15 @@ def retrieve_ranked_results(
     queries = (
         build_evidence_queries(question) if expand_evidence_queries else [question]
     )
-    rankings = [retriever.search(query) for query in queries]
+    rankings = [
+        _search_retriever(retriever, query, candidate_limit) for query in queries
+    ]
     candidates = fuse_query_results(rankings) if len(rankings) > 1 else rankings[0]
     candidates = prioritize_explicit_rag_evidence(question, candidates)
+    if result_filter is not None:
+        if not callable(result_filter):
+            raise TypeError("result_filter must be callable")
+        candidates = [candidate for candidate in candidates if result_filter(candidate)]
     # Keep cross-encoder work bounded even though several sparse runs were fused.
     candidates = candidates[:candidate_limit]
     if reranker is not None:
@@ -493,6 +508,28 @@ def retrieve_ranked_results(
     if not results:
         raise ValueError("No retrieval results were found for the supplied question")
     return results
+
+
+def _search_retriever(retriever: Any, query: str, candidate_limit: int):
+    """Pass candidate breadth through while supporting simple test retrievers."""
+
+    search = getattr(retriever, "search", None)
+    if not callable(search):
+        raise TypeError("retriever must provide a search method")
+    try:
+        parameters = inspect.signature(search).parameters.values()
+    except (TypeError, ValueError):
+        return search(query)
+    names = {parameter.name for parameter in parameters}
+    accepts_kwargs = any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD for parameter in parameters
+    )
+    kwargs: dict[str, int] = {}
+    if accepts_kwargs or "top_k" in names:
+        kwargs["top_k"] = candidate_limit
+    if accepts_kwargs or "candidate_top_k" in names:
+        kwargs["candidate_top_k"] = candidate_limit
+    return search(query, **kwargs)
 
 
 def build_application_retriever(
@@ -647,24 +684,35 @@ def main(argv: Sequence[str] | None = None) -> int:
             collection_name=args.qdrant_collection,
             embedding_model=args.embedding_model,
         )
-        results = retrieve_ranked_results(
-            args.question,
-            args.index_path,
-            top_k=args.top_k,
-            candidate_k=args.candidate_k,
-            max_chunks_per_paper=args.max_chunks_per_paper,
-            max_chunks_per_section=args.max_chunks_per_section,
-            excluded_sections=(
-                ()
-                if args.include_low_information_sections
-                else DEFAULT_EXCLUDED_SECTIONS
-            ),
-            reranker=(
-                build_local_reranker(args.reranker_model) if args.rerank else None
-            ),
-            expand_evidence_queries=args.evidence_query_expansion,
-            retriever=retriever,
+        reranker = build_local_reranker(args.reranker_model) if args.rerank else None
+        excluded_sections = (
+            () if args.include_low_information_sections else DEFAULT_EXCLUDED_SECTIONS
         )
+        if is_multi_paper_question(args.question):
+            from generation.query_decomposition import retrieve_per_entity
+
+            results, _ = retrieve_per_entity(
+                args.question,
+                str(args.index_path),
+                retriever=retriever,
+                per_entity_top_k=max(4, args.top_k),
+                candidate_k=args.candidate_k,
+                reranker=reranker,
+                excluded_sections=excluded_sections,
+            )
+        else:
+            results = retrieve_ranked_results(
+                args.question,
+                args.index_path,
+                top_k=args.top_k,
+                candidate_k=args.candidate_k,
+                max_chunks_per_paper=args.max_chunks_per_paper,
+                max_chunks_per_section=args.max_chunks_per_section,
+                excluded_sections=excluded_sections,
+                reranker=reranker,
+                expand_evidence_queries=args.evidence_query_expansion,
+                retriever=retriever,
+            )
     else:
         results = load_ranked_results(
             args.results_json, config=args.config, query_id=args.query_id

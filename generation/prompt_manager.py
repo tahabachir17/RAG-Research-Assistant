@@ -10,6 +10,11 @@ from typing import Any
 import yaml
 from jinja2 import Environment, StrictUndefined, TemplateError, meta
 
+try:
+    from .entities import is_multi_paper_question
+except ImportError:
+    from entities import is_multi_paper_question
+
 
 @dataclass(slots=True)
 class PromptTemplate:
@@ -101,6 +106,8 @@ def detect_question_parts(question: str) -> list[str]:
     marked = [part for part in marked if part]
     if len(marked) > 1:
         return marked
+    if is_multi_paper_question(normalized):
+        return [normalized.strip("?")]
     for match in re.finditer(r"\s+(?:and|as well as)\s+", normalized, re.IGNORECASE):
         left = normalized[: match.start()].strip(" ,;?")
         right = normalized[match.end() :].strip(" ,;?")
@@ -147,7 +154,9 @@ QUESTION_TYPE_INSTRUCTIONS = {
         "Separate current limitations from proposed future improvements."
     ),
     "comparison": (
-        "Compare both subjects along the same evidence-supported dimensions."
+        "Compare every paper explicitly named in the question along the same "
+        "evidence-supported dimensions. Include every named paper. If its evidence "
+        "is absent, say so explicitly instead of omitting it or guessing."
     ),
 }
 
@@ -175,10 +184,12 @@ def classify_question_type(question: str) -> str:
     normalized = " ".join(_strip_attribution_prefix(question).casefold().split())
     if not normalized:
         raise ValueError("question must not be empty")
+    if is_multi_paper_question(question) or re.search(
+        r"\bcompare\b|\bcontrast\b|\bversus\b|\bvs\.?\b|\bdiffer", normalized
+    ):
+        return "comparison"
     if re.search(r"\blimitations?\b|\bfuture work\b|\bimprovements?\b", normalized):
         return "limitations_future_work"
-    if re.search(r"\bcompare\b|\bcontrast\b|\bversus\b|\bvs\.?\b|\bdiffer", normalized):
-        return "comparison"
     if normalized.startswith("why ") or re.search(
         r"\b(?:better|advantage|outperform|improv(?:e|es|ed|ement))\b", normalized
     ):

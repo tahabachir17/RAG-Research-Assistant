@@ -35,6 +35,8 @@ class ChatResponse(BaseModel):
     citations_valid: bool
     latency_ms: int
     used_rerank: bool
+    named_papers: list[str] = Field(default_factory=list)
+    papers_without_evidence: list[str] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):
